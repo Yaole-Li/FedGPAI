@@ -11,7 +11,7 @@ parser.add_argument("--dataset", default='Air', type=str, help="数据集名称"
 parser.add_argument("--task", default='regression', type=str, help="任务类型")
 
 # 客户端相关参数
-parser.add_argument("--num_clients", default=400, type=int, help="客户端数量")
+parser.add_argument("--num_clients", default=100, type=int, help="客户端数量")
 parser.add_argument("--num_samples", default=250, type=int, help="每个客户端的样本数量")
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
@@ -125,8 +125,26 @@ for cc in range(args.global_rounds):
             # 计算损失并更新权重
             l_fed = (f_RF_fed-Y[j][i])**2
             l_loc = (f_RF_loc-Y[j][i])**2
-            a[j, 0] *= torch.exp(-args.eta*l_fed)
-            b[j, 0] *= torch.exp(-args.eta*l_loc)
+            
+            # 更安全的广播处理
+            # 先计算指数项
+            exp_term_fed = torch.exp(-args.eta * l_fed)
+            exp_term_loc = torch.exp(-args.eta * l_loc)
+            
+            # 确保指数项有正确的形状以便广播
+            if not isinstance(exp_term_fed, torch.Tensor):
+                exp_term_fed = torch.tensor(exp_term_fed, device=a.device)
+            if exp_term_fed.dim() == 0:  # 标量形状
+                exp_term_fed = exp_term_fed.reshape(1, 1)
+                
+            if not isinstance(exp_term_loc, torch.Tensor):
+                exp_term_loc = torch.tensor(exp_term_loc, device=b.device)
+            if exp_term_loc.dim() == 0:  # 标量形状
+                exp_term_loc = exp_term_loc.reshape(1, 1)
+            
+            # 执行广播兼容的乘法操作 
+            a[j, 0] = a[j, 0] * exp_term_fed
+            b[j, 0] = b[j, 0] * exp_term_loc
             
             # 本地模型更新
             alg_loc[j].global_update([local_grad_loc])
