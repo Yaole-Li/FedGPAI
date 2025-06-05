@@ -1,6 +1,8 @@
 import argparse
 import torch
 import numpy as np
+import os
+import gc
 from lib.datasets.data_loader import data_loader
 from lib.FedPOE.get_FedPOE_pytorch import get_FedPOE
 
@@ -11,14 +13,14 @@ parser.add_argument("--dataset", default='Air', type=str, help="数据集名称"
 parser.add_argument("--task", default='regression', type=str, help="任务类型")
 
 # 客户端相关参数
-parser.add_argument("--num_clients", default=100, type=int, help="客户端数量")
+parser.add_argument("--num_clients", default=40, type=int, help="客户端数量")
 parser.add_argument("--num_samples", default=250, type=int, help="每个客户端的样本数量")
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
 # 模型相关参数
 parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
-parser.add_argument("--global_rounds", default=50, type=int, help="全局训练轮数")
+parser.add_argument("--global_rounds", default=20, type=int, help="全局训练轮数")
 
 args = parser.parse_args()
 
@@ -53,6 +55,11 @@ b = torch.ones((K, 1), dtype=torch.float32)
 
 # 初始化设备
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"使用设备: {device}")
+
+# 创建保存模型的目录
+os.makedirs("checkpoints", exist_ok=True)
+
 w = w.to(device)
 w_loc = w_loc.to(device)
 a = a.to(device)
@@ -139,6 +146,30 @@ for cc in range(args.global_rounds):
     
     # 更新总体MSE
     mse = (1 / (cc + 1)) * ((cc * mse) + torch.reshape(torch.mean(e, dim=1), (-1, 1)))
+    
+    # 每5轮计算并输出一次MAE
+    if (cc+1) % 5 == 0 or cc == 0:
+        current_mae = torch.mean(torch.sqrt(mse[-1])).item()
+        print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}")
+        
+        # 保存模型
+        checkpoint = {
+            'epoch': cc + 1,
+            'global_model': alg.state_dict() if hasattr(alg, 'state_dict') else None,
+            'w': w,
+            'w_loc': w_loc,
+            'a': a,
+            'b': b,
+            'mse': mse[-1].item(),
+            'mae': current_mae
+        }
+        torch.save(checkpoint, f"checkpoints/fedpoe_checkpoint_epoch_{cc+1}.pt")
+        print(f"  模型已保存到: checkpoints/fedpoe_checkpoint_epoch_{cc+1}.pt")
+    
+    # 清理显存
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
 
 # 打印最终结果
 print(f'\nFedPOE的MSE为: {mse[-1].item()}')

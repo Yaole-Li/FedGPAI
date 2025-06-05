@@ -2,6 +2,9 @@
 __pycache__
 .ruff_cache
 
+# checkpoints
+checkpoints
+
 # configs
 config/*
 !config/defaults.yaml
