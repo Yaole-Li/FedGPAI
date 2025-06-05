@@ -60,7 +60,7 @@ print(f"开始联邦学习训练 ({args.global_rounds} 轮全局训练, {args.lo
 
 # 执行联邦学习训练过程 (算法3.1第1行: for t ← 0, ..., T - 1 do)
 for cc in range(args.global_rounds):
-    print(f"全局轮次 {cc+1}/{args.global_rounds}")
+    print(f"\n全局轮次 {cc+1}/{args.global_rounds}")
     
     # 生成随机特征
     ran_feature = np.zeros((N, n_components, gamma.shape[0]))
@@ -76,7 +76,7 @@ for cc in range(args.global_rounds):
     # 训练过程 (算法3.1第3行: for 客户端 i ← 1, ‥, N do)
     for i in range(args.num_samples):
         if i % 50 == 0:
-            print(f"  样本 {i}/{args.num_samples}")
+            print(f"  评估进度: 样本 {i}/{args.num_samples}")
             
         agg_grad = []  # 聚合梯度
         agg_fe_grad = []  # 特征提取器聚合梯度

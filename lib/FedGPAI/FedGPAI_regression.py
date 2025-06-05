@@ -55,8 +55,8 @@ class FedGPAI_regression:
         # 初始化回归器
         self.regressor = torch.zeros((self.n_rf, 1), dtype=torch.float32, requires_grad=True).to(self.device)
 
-        print(f"初始化模型 - 输入特征维度: {self.input_feature_dim}, RF特征维度: {self.n_rf}")
-        print(f"特征提取器形状: {self.feature_extractor.shape}, 回归器形状: {self.regressor.shape}")
+        # print(f"初始化模型 - 输入特征维度: {self.input_feature_dim}, RF特征维度: {self.n_rf}")
+        # print(f"特征提取器形状: {self.feature_extractor.shape}, 回归器形状: {self.regressor.shape}")
         
         # 初始化参数
         self.lam = lam  # 正则化参数
@@ -98,7 +98,7 @@ class FedGPAI_regression:
         
         # 确保维度匹配 - 回归器的行数应该等于特征提取器的列数
         if hybrid_model.feature_extractor.shape[1] != hybrid_model.regressor.shape[0]:
-            print(f"警告：混合模型的特征提取器({hybrid_model.feature_extractor.shape})和回归器({hybrid_model.regressor.shape})维度不匹配")
+            # print(f"警告：混合模型的特征提取器({hybrid_model.feature_extractor.shape})和回归器({hybrid_model.regressor.shape})维度不匹配")
             # 调整回归器维度以匹配特征提取器
             new_regressor = torch.zeros((hybrid_model.feature_extractor.shape[1], 1), dtype=torch.float32, requires_grad=True).to(self.device)
             # 复制可能的重叠部分
@@ -113,7 +113,7 @@ class FedGPAI_regression:
         if local_regressor.device != self.device:
             hybrid_model.regressor = hybrid_model.regressor.to(self.device)
             
-        print(f"混合模型 - 特征提取器形状: {hybrid_model.feature_extractor.shape}, 回归器形状: {hybrid_model.regressor.shape}")
+        # print(f"混合模型 - 特征提取器形状: {hybrid_model.feature_extractor.shape}, 回归器形状: {hybrid_model.regressor.shape}")
         
         return hybrid_model
         
@@ -138,7 +138,7 @@ class FedGPAI_regression:
         # 检查并调整输入特征维度
         if X.shape[1] != self.input_feature_dim:
             self.input_feature_dim = X.shape[1]
-            print(f"调整特征提取器维度以匹配输入维度 {X.shape[1]}")
+            # print(f"调整特征提取器维度以匹配输入维度 {X.shape[1]}")
             # 重新初始化特征提取器以匹配输入维度
             self.feature_extractor = torch.randn(self.input_feature_dim, self.n_rf, dtype=torch.float32).to(self.device)
             self.feature_extractor.requires_grad_(True)
@@ -170,20 +170,21 @@ class FedGPAI_regression:
         
         # 检查输入维度，如果不匹配，可能需要调整特征提取器
         if X.shape[1] != self.input_feature_dim:
-            print(f"预测时发现输入维度不匹配: 输入维度={X.shape[1]}, 特征提取器输入维度={self.input_feature_dim}")
+            # print(f"预测时发现输入维度不匹配: 输入维度={X.shape[1]}, 特征提取器输入维度={self.input_feature_dim}")
+            pass
         
         # 提取特征
         X_features = self.extract_features(X)
         
         # 验证特征维度与回归器维度是否匹配
         if X_features.shape[1] != self.regressor.shape[0]:
-            print(f"警告：特征维度({X_features.shape[1]})与回归器输入维度({self.regressor.shape[0]})不匹配")
+            # print(f"警告：特征维度({X_features.shape[1]})与回归器输入维度({self.regressor.shape[0]})不匹配")
             # 如果需要，可以调整回归器以匹配特征
             new_regressor = torch.zeros((X_features.shape[1], 1), dtype=torch.float32, requires_grad=True).to(device)
             min_dim = min(self.regressor.shape[0], X_features.shape[1])
             new_regressor[:min_dim] = self.regressor[:min_dim]
             self.regressor = new_regressor
-            print(f"已调整回归器维度为: {self.regressor.shape}")
+            # print(f"已调整回归器维度为: {self.regressor.shape}")
         
         if w is not None:
             # 如果给定权重，则使用提供的权重
@@ -198,8 +199,8 @@ class FedGPAI_regression:
                 f_RF_p = torch.matmul(X_features, self.regressor)
                 return f_RF_p, f_RF_p, X_features
             except RuntimeError as e:
-                print(f"矩阵乘法错误: {e}")
-                print(f"X_features形状: {X_features.shape}, regressor形状: {self.regressor.shape}")
+                # print(f"矩阵乘法错误: {e}")
+                # print(f"X_features形状: {X_features.shape}, regressor形状: {self.regressor.shape}")
                 # 尝试转置特征或回归器来匹配维度
                 if X_features.shape[1] == self.regressor.shape[1] and self.regressor.shape[0] == 1:
                     # 回归器形状为[1, n]，需要转置为[n, 1]
@@ -269,7 +270,7 @@ class FedGPAI_regression:
         grad_local = (2.0 / X.shape[0]) * torch.matmul(X_local_t, (f_RF_local - Y))
         g_i = torch.norm(grad_local, p=2)
         
-        print(f"全局模型梯度范数: {g_g.item()}, 本地模型梯度范数: {g_i.item()}")
+        # print(f"全局模型梯度范数: {g_g.item()}, 本地模型梯度范数: {g_i.item()}")
         
         return g_g, g_i
     
