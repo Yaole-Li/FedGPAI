@@ -18,7 +18,7 @@ parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比�
 # 模型相关参数
 parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
-parser.add_argument("--global_rounds", default=20, type=int, help="全局训练轮数")
+parser.add_argument("--global_rounds", default=50, type=int, help="全局训练轮数")
 
 args = parser.parse_args()
 
@@ -110,9 +110,14 @@ for cc in range(args.global_rounds):
             l_fed = (f_RF_fed - y_j)**2
             l_loc = (f_RF_loc - y_j)**2
             
-            # 指数加权权重更新
-            a[j, 0] *= torch.exp(-args.eta * l_fed)
-            b[j, 0] *= torch.exp(-args.eta * l_loc)
+            # 计算指数项
+            exp_term_fed = torch.exp(-args.eta * l_fed)
+            exp_term_loc = torch.exp(-args.eta * l_loc)
+            
+            # 直接更新a和b的值，避免广播问题
+            # 将两个标量值转换为浮点数
+            a[j, 0] = a[j, 0] * float(exp_term_fed)
+            b[j, 0] = b[j, 0] * float(exp_term_loc)
             
             # 本地模型更新
             alg_loc[j].global_update([local_grad_loc])

@@ -95,6 +95,10 @@ for cc in range(args.global_rounds):
             # 首先对混合模型的回归器进行微调（算法3.2第4行）
             # 本地训练多轮
             for local_round in range(args.local_rounds):
+                # 仅在第一个全局轮次的第一个样本的第一个客户端显示本地训练轮次信息
+                if cc == 0 and i == 0 and j == 0:
+                    print(f"    客户端{j+1}的本地训练轮次: {local_round+1}/{args.local_rounds}")
+                
                 # 混合模型微调
                 f_RF_hybrid, f_RF_p_hybrid, X_features_hybrid = alg_hybrid[j].predict(X[j][i:i+1, :], None)
                 loss_hybrid = (f_RF_hybrid - Y[j][i])**2
