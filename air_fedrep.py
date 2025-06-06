@@ -181,15 +181,17 @@ for cc in range(start_epoch, args.global_rounds):
                     X_features_t = X_features.t()
                     regressor_grad = (2.0 / x_j.shape[0]) * torch.matmul(X_features_t, (outputs - y_j))
                     
-                    # 更新回归器
-                    local_model.regressor -= args.eta * regressor_grad
+                    # 更新回归器（使用非原地操作）
+                    with torch.no_grad():
+                        local_model.regressor -= args.eta * regressor_grad
                 else:
                     # 阶段2：只训练特征提取器，冻结回归器
                     input_features_grad = (2.0 / x_j.shape[0]) * torch.matmul((outputs - y_j), local_model.regressor.t())
                     feature_extractor_grad = torch.matmul(x_j.t(), input_features_grad)
                     
-                    # 更新特征提取器
-                    local_model.feature_extractor -= args.eta * feature_extractor_grad
+                    # 更新特征提取器（使用非原地操作）
+                    with torch.no_grad():
+                        local_model.feature_extractor -= args.eta * feature_extractor_grad
             
             # 训练结束后，使用本地模型进行预测
             outputs, _, _ = local_model.predict(x_j, None)
@@ -226,15 +228,24 @@ for cc in range(start_epoch, args.global_rounds):
         current_mae = torch.mean(torch.sqrt(mse[-1])).item()
         print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}")
         
-        # 保存模型
+        # 确保保存目录存在
+        checkpoint_dir = args.save_dir
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        # 构建检查点文件名和路径
+        checkpoint_filename = f"epoch_{cc+1}.pt"
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+        
+        # 保存模型和训练状态
         checkpoint = {
             'epoch': cc + 1,
             'global_model': global_model.state_dict() if hasattr(global_model, 'state_dict') else None,
+            'local_models': [model.state_dict() if hasattr(model, 'state_dict') else None for model in local_models],
             'mse': mse[-1].item(),
             'mae': current_mae
         }
-        torch.save(checkpoint, f"{args.save_dir}/fedrep_checkpoint_epoch_{cc+1}.pt")
-        print(f"  模型已保存到: {args.save_dir}/fedrep_checkpoint_epoch_{cc+1}.pt")
+        torch.save(checkpoint, checkpoint_path)
+        print(f"  模型已保存到: {checkpoint_path}")
     
     # 清理显存
     if torch.cuda.is_available():

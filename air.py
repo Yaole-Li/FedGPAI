@@ -3,8 +3,44 @@ import argparse
 import torch
 import os
 import gc
+import psutil
+import time
+from pynvml import *
 from lib.datasets.data_loader import data_loader
 from lib.FedGPAI.get_FedGPAI import get_FedGPAI
+
+# 初始化NVML以监控GPU显存
+nvmlInit()
+handle = nvmlDeviceGetHandleByIndex(0)  # 假设使用第一个GPU
+
+def print_memory_usage(prefix=""):
+    """打印当前内存和显存使用情况"""
+    # 获取GPU显存信息
+    info = nvmlDeviceGetMemoryInfo(handle)
+    gpu_total = info.total / 1024**2  # MB
+    gpu_used = info.used / 1024**2
+    gpu_free = info.free / 1024**2
+    
+    # 获取系统内存信息
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    ram_used = mem_info.rss / 1024**2  # MB
+    
+    print(f"{prefix} | GPU: {gpu_used:.1f}/{gpu_total:.1f} MB (Free: {gpu_free:.1f} MB) | RAM: {ram_used:.1f} MB")
+
+def track_tensors():
+    """跟踪当前所有张量的数量和大小"""
+    total_size = 0
+    total_num = 0
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                obj_size = obj.nelement() * obj.element_size() / 1024**2  # MB
+                total_size += obj_size
+                total_num += 1
+        except:
+            pass
+    return total_num, total_size
 
 parser = argparse.ArgumentParser()
 
@@ -13,7 +49,7 @@ parser.add_argument("--dataset", default='Air', type=str, help="数据集名称"
 parser.add_argument("--task", default='regression', type=str, help="任务类型")
 
 # 客户端相关参数
-parser.add_argument("--num_clients", default=40, type=int, help="客户端数量")
+parser.add_argument("--num_clients", default=400, type=int, help="客户端数量")
 parser.add_argument("--num_samples", default=250, type=int, help="每个客户端的样本数量")
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
@@ -69,16 +105,25 @@ a = a.to(device)
 b = b.to(device)
 
 # 创建保存模型的目录
-os.makedirs("checkpoints", exist_ok=True)
+# 使用方法名称_客户端数量_全局联邦训练轮数作为文件夹名称
+checkpoint_dir = os.path.join("checkpoints", f"FedGPAI_{args.dataset}_{args.num_clients}_{args.global_rounds}")
+os.makedirs(checkpoint_dir, exist_ok=True)
+print(f"检查点将保存到: {checkpoint_dir}")
 
 # 初始化变量
 start_epoch = 0
 
 # 从检查点恢复训练
 if args.resume and args.checkpoint:
-    if os.path.exists(args.checkpoint):
-        print(f"加载检查点: {args.checkpoint}")
-        checkpoint = torch.load(args.checkpoint)
+    # 如果提供的是完整路径，直接使用；否则在checkpoint_dir中查找
+    checkpoint_path = args.checkpoint
+    if not os.path.exists(checkpoint_path) and not os.path.isabs(checkpoint_path):
+        # 尝试在当前运行的checkpoint_dir中查找
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_path)
+    
+    if os.path.exists(checkpoint_path):
+        print(f"加载检查点: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path)
         start_epoch = checkpoint['epoch']
         w = checkpoint['w']
         w_loc = checkpoint['w_loc']
@@ -93,7 +138,7 @@ if args.resume and args.checkpoint:
         print(f"恢复训练从轮次: {start_epoch}")
         print(f"上一轮次MSE: {last_mse:.6f}, MAE: {last_mae:.6f}")
     else:
-        print(f"检查点文件不存在: {args.checkpoint}, 从头开始训练")
+        print(f"检查点文件不存在: {checkpoint_path}, 从头开始训练")
 
 # 初始化性能评估指标
 mse = torch.zeros((args.num_samples, 1), dtype=torch.float32).to(device)
@@ -104,6 +149,24 @@ print(f"开始联邦学习训练 ({args.global_rounds} 轮全局训练, {args.lo
 # 执行联邦学习训练过程 (算法3.1第1行: for t ← 0, ..., T - 1 do)
 for cc in range(start_epoch, args.global_rounds):
     print(f"\n全局轮次 {cc+1}/{args.global_rounds}")
+    
+    # 打印初始内存状态
+    print_memory_usage("训练前")
+    start_time = time.time()
+    
+    # 清理显存并打印内存状态
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+    
+    # 跟踪张量数量和大小
+    num_tensors, tensors_size = track_tensors()
+    print_memory_usage(f"清理后 轮次{cc+1}")
+    print(f"当前活跃张量数: {num_tensors}, 总大小: {tensors_size:.2f} MB")
+    
+    # 记录本轮耗时
+    epoch_time = time.time() - start_time
+    print(f"本轮训练耗时: {epoch_time:.2f}秒")
     
     # 生成随机特征
     ran_feature = torch.zeros((N, n_components, gamma.shape[0]), dtype=torch.float32)
@@ -154,9 +217,6 @@ for cc in range(start_epoch, args.global_rounds):
             # 算法3.2: 基于梯度幅度的参数重要性评估
             # 首先对混合模型的回归器进行微调（算法3.2第4行）
             
-            # 当前客户端本地训练开始
-            local_train_start = True
-            
             # 本地训练多轮
             for local_round in range(args.local_rounds):
                 # 混合模型微调
@@ -164,12 +224,18 @@ for cc in range(start_epoch, args.global_rounds):
                 loss_hybrid = (f_RF_hybrid - Y[j][i])**2
                 # 通过梯度下降微调混合模型的回归器
                 _, hybrid_grad = alg_hybrid[j].local_update(f_RF_p_hybrid, Y[j][i], torch.ones_like(w[j:j+1, :]), X_features_hybrid)
+                # 及时释放中间变量内存
+                del f_RF_p_hybrid
+                if local_round < args.local_rounds - 1:  # 最后一轮需要保留这些变量
+                    del f_RF_hybrid, X_features_hybrid, loss_hybrid
             
             # 算法3.2第6-12行: 计算全局模型和混合模型梯度幅度
             g_g, g_i = alg.evaluate_gradient_magnitude(alg, alg_hybrid[j], X[j][i:i+1, :], Y[j][i])
             
             # 算法3.3: 基于逐参数自适应插值的个性化回归器优化
             personalized_regressor = alg.model_interpolation(g_g, g_i, alg.regressor, alg_hybrid[j].regressor)
+            # 释放不再需要的变量
+            del g_g, g_i, hybrid_grad
             
             # 算法3.1第10行: 客户端 i 获得初始模型θ̂_i^t = (ω^t, φ̂_i^t)
             alg_loc[j].regressor = personalized_regressor
@@ -194,25 +260,13 @@ for cc in range(start_epoch, args.global_rounds):
             l_fed = (f_RF_fed-Y[j][i])**2
             l_loc = (f_RF_loc-Y[j][i])**2
             
-            # 更安全的广播处理
-            # 先计算指数项
+            # 更安全的广播处理 - 使用标量转换避免张量累积
             exp_term_fed = torch.exp(-args.eta * l_fed)
             exp_term_loc = torch.exp(-args.eta * l_loc)
             
-            # 确保指数项有正确的形状以便广播
-            if not isinstance(exp_term_fed, torch.Tensor):
-                exp_term_fed = torch.tensor(exp_term_fed, device=a.device)
-            if exp_term_fed.dim() == 0:  # 标量形状
-                exp_term_fed = exp_term_fed.reshape(1, 1)
-                
-            if not isinstance(exp_term_loc, torch.Tensor):
-                exp_term_loc = torch.tensor(exp_term_loc, device=b.device)
-            if exp_term_loc.dim() == 0:  # 标量形状
-                exp_term_loc = exp_term_loc.reshape(1, 1)
-            
-            # 执行广播兼容的乘法操作 
-            a[j, 0] = a[j, 0] * exp_term_fed
-            b[j, 0] = b[j, 0] * exp_term_loc
+            # 直接使用浮点数更新，避免张量累积导致的内存泄漏
+            a[j, 0] = a[j, 0] * float(exp_term_fed)
+            b[j, 0] = b[j, 0] * float(exp_term_loc)
             
             # 本地模型更新
             alg_loc[j].global_update([local_grad_loc])
@@ -237,12 +291,15 @@ for cc in range(start_epoch, args.global_rounds):
     # 计算平均误差
     mse = (1/(cc+1)) * ((cc*mse)+torch.reshape(torch.mean(e, dim=1), (-1, 1)))
     
-    # 每5轮计算并输出一次MAE
+    # 每5轮计算并输出一次MAE和MSE
     if (cc+1) % 5 == 0 or cc == 0:
+        current_mse = mse[-1].item()
         current_mae = torch.mean(torch.sqrt(mse[-1])).item()
-        print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}")
+        print(f"\n  当前轮次 {cc+1} 的MSE为: {current_mse:.6f}, MAE为: {current_mae:.6f}")
         
         # 保存模型
+        checkpoint_filename = f"epoch_{cc+1}.pt"
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
         checkpoint = {
             'epoch': cc + 1,
             'global_model': alg.state_dict() if hasattr(alg, 'state_dict') else None,
@@ -253,13 +310,22 @@ for cc in range(start_epoch, args.global_rounds):
             'mse': mse[-1].item(),
             'mae': current_mae
         }
-        torch.save(checkpoint, f"checkpoints/fedgpai_checkpoint_epoch_{cc+1}.pt")
-        print(f"  模型已保存到: checkpoints/fedgpai_checkpoint_epoch_{cc+1}.pt")
+        torch.save(checkpoint, checkpoint_path)
+        print(f"  模型已保存到: {checkpoint_path}")
+    
+    # 每轮结束后清理内存
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+    
+    # 释放本轮不再需要的大型变量
+    del e, ran_feature
+    if 'agg_grad' in locals():
+        del agg_grad
     
     # 清理显存
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    gc.collect()
 
 # 打印最终结果
 print('FedGPAI的MSE为：%s' % mse[-1].item())

@@ -82,39 +82,42 @@ class FedGPAI_regression:
         Returns:
             hybrid_model: 混合模型
         """
-        # 如果特征在GPU上，首先分离梯度、复制到CPU再转换为NumPy数组
-        rf_feature_np = global_feature_extractor.detach().cpu().numpy() if global_feature_extractor.is_cuda else global_feature_extractor.detach().numpy()
-        
-        # 创建混合模型
-        hybrid_model = FedGPAI_regression(lam=self.lam, rf_feature=rf_feature_np, eta=self.eta, num_clients=self.num_clients, is_global=False)
-        
-        # 设置正确的维度参数
-        hybrid_model.input_feature_dim = global_feature_extractor.shape[0]
-        hybrid_model.n_rf = global_feature_extractor.shape[1]
-        
-        # 直接设置特征提取器和回归器
-        hybrid_model.feature_extractor = global_feature_extractor.clone()
-        hybrid_model.regressor = local_regressor.clone()
-        
-        # 确保维度匹配 - 回归器的行数应该等于特征提取器的列数
-        if hybrid_model.feature_extractor.shape[1] != hybrid_model.regressor.shape[0]:
-            # print(f"警告：混合模型的特征提取器({hybrid_model.feature_extractor.shape})和回归器({hybrid_model.regressor.shape})维度不匹配")
-            # 调整回归器维度以匹配特征提取器
-            new_regressor = torch.zeros((hybrid_model.feature_extractor.shape[1], 1), dtype=torch.float32, requires_grad=True).to(self.device)
-            # 复制可能的重叠部分
-            min_dim = min(hybrid_model.regressor.shape[0], hybrid_model.feature_extractor.shape[1])
-            new_regressor[:min_dim] = hybrid_model.regressor[:min_dim]
-            hybrid_model.regressor = new_regressor
-        
-        # 确保混合模型的张量在正确的设备上
-        if global_feature_extractor.device != self.device:
-            hybrid_model.feature_extractor = hybrid_model.feature_extractor.to(self.device)
-        
-        if local_regressor.device != self.device:
-            hybrid_model.regressor = hybrid_model.regressor.to(self.device)
+        # 在不跟踪梯度的情况下创建混合模型，减少内存占用
+        with torch.no_grad():
+            # 如果特征在GPU上，首先分离梯度、复制到CPU再转换为NumPy数组
+            rf_feature_np = global_feature_extractor.detach().cpu().numpy() if global_feature_extractor.is_cuda else global_feature_extractor.detach().numpy()
             
-        # print(f"混合模型 - 特征提取器形状: {hybrid_model.feature_extractor.shape}, 回归器形状: {hybrid_model.regressor.shape}")
-        
+            # 创建混合模型
+            hybrid_model = FedGPAI_regression(lam=self.lam, rf_feature=rf_feature_np, eta=self.eta, num_clients=self.num_clients, is_global=False)
+            
+            # 设置正确的维度参数
+            hybrid_model.input_feature_dim = global_feature_extractor.shape[0]
+            hybrid_model.n_rf = global_feature_extractor.shape[1]
+            
+            # 直接设置特征提取器和回归器 - 使用detach()切断梯度图
+            hybrid_model.feature_extractor = global_feature_extractor.clone().detach()
+            hybrid_model.regressor = local_regressor.clone().detach()
+            
+            # 确保维度匹配 - 回归器的行数应该等于特征提取器的列数
+            if hybrid_model.feature_extractor.shape[1] != hybrid_model.regressor.shape[0]:
+                # 调整回归器维度以匹配特征提取器
+                new_regressor = torch.zeros((hybrid_model.feature_extractor.shape[1], 1), dtype=torch.float32).to(self.device)
+                # 复制可能的重叠部分
+                min_dim = min(hybrid_model.regressor.shape[0], hybrid_model.feature_extractor.shape[1])
+                new_regressor[:min_dim] = hybrid_model.regressor[:min_dim]
+                hybrid_model.regressor = new_regressor
+                
+            # 确保混合模型的张量在正确的设备上
+            if global_feature_extractor.device != self.device:
+                hybrid_model.feature_extractor = hybrid_model.feature_extractor.to(self.device)
+            
+            if local_regressor.device != self.device:
+                hybrid_model.regressor = hybrid_model.regressor.to(self.device)
+                
+            # 确保requires_grad正确设置
+            hybrid_model.feature_extractor.requires_grad_(True)
+            hybrid_model.regressor.requires_grad_(True)
+            
         return hybrid_model
         
     def extract_features(self, X):
@@ -137,14 +140,13 @@ class FedGPAI_regression:
         
         # 检查并调整输入特征维度
         if X.shape[1] != self.input_feature_dim:
-            self.input_feature_dim = X.shape[1]
-            # print(f"调整特征提取器维度以匹配输入维度 {X.shape[1]}")
-            # 重新初始化特征提取器以匹配输入维度
-            self.feature_extractor = torch.randn(self.input_feature_dim, self.n_rf, dtype=torch.float32).to(self.device)
-            self.feature_extractor.requires_grad_(True)
+            with torch.no_grad():
+                self.input_feature_dim = X.shape[1]
+                # 重新初始化特征提取器以匹配输入维度
+                self.feature_extractor = torch.randn(self.input_feature_dim, self.n_rf, dtype=torch.float32).to(self.device)
+                self.feature_extractor.requires_grad_(True)
         
-        # 现在特征提取器应该是 [input_dim, n_rf]，而X是 [batch_size, input_dim]
-        # 所以矩阵乘法应该是X @ feature_extractor，结果是 [batch_size, n_rf]
+        # 使用矩阵乘法计算特征，避免创建不必要的中间过程
         X_features = torch.matmul(X, self.feature_extractor)
                     
         return X_features
@@ -162,52 +164,68 @@ class FedGPAI_regression:
             f_RF_p: 预测值
             X_features: 特征
         """
+        # 在计算过程中使用的变量
+        X_features = None
+        f_RF_p = None
+            
         # 确保X是Torch张量并移入GPU
         if not isinstance(X, torch.Tensor):
             X = torch.tensor(X, dtype=torch.float32).to(device)
         elif X.device != device:
             X = X.to(device)
-        
-        # 检查输入维度，如果不匹配，可能需要调整特征提取器
+            
+        # 检查输入维度是否与特征提取器匹配
         if X.shape[1] != self.input_feature_dim:
-            # print(f"预测时发现输入维度不匹配: 输入维度={X.shape[1]}, 特征提取器输入维度={self.input_feature_dim}")
+            # 需要在extract_features的实现中处理这个问题
             pass
-        
+            
         # 提取特征
-        X_features = self.extract_features(X)
-        
-        # 验证特征维度与回归器维度是否匹配
-        if X_features.shape[1] != self.regressor.shape[0]:
-            # print(f"警告：特征维度({X_features.shape[1]})与回归器输入维度({self.regressor.shape[0]})不匹配")
-            # 如果需要，可以调整回归器以匹配特征
-            new_regressor = torch.zeros((X_features.shape[1], 1), dtype=torch.float32, requires_grad=True).to(device)
-            min_dim = min(self.regressor.shape[0], X_features.shape[1])
-            new_regressor[:min_dim] = self.regressor[:min_dim]
-            self.regressor = new_regressor
-            # print(f"已调整回归器维度为: {self.regressor.shape}")
-        
-        if w is not None:
-            # 如果给定权重，则使用提供的权重
-            f_RF_p = torch.zeros(X.shape[0], 1).to(device)
-            for j in range(X.shape[0]):
-                # 确保维度一致性的矩阵乘法
-                f_RF_p[j, 0] = torch.matmul(X_features[j, :], self.regressor)
-            return f_RF_p, f_RF_p, X_features
-        else:
-            # 否则使用默认模型参数
-            try:
-                f_RF_p = torch.matmul(X_features, self.regressor)
-                return f_RF_p, f_RF_p, X_features
-            except RuntimeError as e:
-                # print(f"矩阵乘法错误: {e}")
-                # print(f"X_features形状: {X_features.shape}, regressor形状: {self.regressor.shape}")
-                # 尝试转置特征或回归器来匹配维度
-                if X_features.shape[1] == self.regressor.shape[1] and self.regressor.shape[0] == 1:
-                    # 回归器形状为[1, n]，需要转置为[n, 1]
-                    self.regressor = self.regressor.t()
+        with torch.set_grad_enabled(self.feature_extractor.requires_grad):
+            X_features = self.extract_features(X)
+            
+            # 验证特征维度与回归器维度是否匹配
+            if X_features.shape[1] != self.regressor.shape[0]:
+                # 使用no_grad调整回归器维度
+                with torch.no_grad():
+                    new_regressor = torch.zeros((X_features.shape[1], 1), dtype=torch.float32).to(device)
+                    min_dim = min(self.regressor.shape[0], X_features.shape[1])
+                    new_regressor[:min_dim] = self.regressor[:min_dim]
+                    self.regressor = new_regressor
+                    # 确保正确设置requires_grad
+                    self.regressor.requires_grad_(True)
+            
+            # 计算预测结果
+            if w is not None:
+                # 如果提供了权重，使用矩阵乘法计算
+                with torch.no_grad():
+                    # 更高效的矩阵乘法，避免循环操作
                     f_RF_p = torch.matmul(X_features, self.regressor)
-                    return f_RF_p, f_RF_p, X_features
-                raise
+            else:
+                # 否则直接使用矩阵乘法
+                try:
+                    f_RF_p = torch.matmul(X_features, self.regressor)
+                except RuntimeError as e:
+                    # 尝试转置特征或回归器来匹配维度
+                    with torch.no_grad():
+                        if X_features.shape[1] == self.regressor.shape[1] and self.regressor.shape[0] == 1:
+                            # 回归器形状为[1, n]，需要转置为[n, 1]
+                            self.regressor = self.regressor.t()
+                            f_RF_p = torch.matmul(X_features, self.regressor)
+                        else:
+                            # 创建新的回归器以匹配特征维度
+                            new_regressor = torch.zeros((X_features.shape[1], 1), dtype=torch.float32).to(device)
+                            min_dim = min(self.regressor.shape[0] if self.regressor.shape[0] > 1 else self.regressor.shape[1], X_features.shape[1])
+                            if self.regressor.shape[0] > 1:  # 如果是[n, 1]形状
+                                new_regressor[:min_dim] = self.regressor[:min_dim]
+                            else:  # 如果是[1, n]形状
+                                new_regressor[:min_dim] = self.regressor.t()[:min_dim]
+                            self.regressor = new_regressor
+                            self.regressor.requires_grad_(True)
+                            # 重新计算
+                            f_RF_p = torch.matmul(X_features, self.regressor)
+                        
+            # 确保返回的张量不包含不必要的计算图
+            return f_RF_p.detach() if w is None else f_RF_p, f_RF_p.detach() if w is None else f_RF_p, X_features.detach() if self.feature_extractor.requires_grad else X_features
     
     def evaluate_gradient_magnitude(self, global_model, local_model, X, Y):
         """
@@ -223,56 +241,66 @@ class FedGPAI_regression:
             g_g: 全局模型梯度幅度
             g_i: 本地模型梯度幅度
         """
-        # 重置所有梯度
-        if hasattr(global_model, 'optimizer'):
-            global_model.optimizer.zero_grad()
-        if hasattr(local_model, 'optimizer'):
-            local_model.optimizer.zero_grad()
+        # 使用torch.no_grad()避免计算图的积累
+        with torch.no_grad():
+            # 将输入转换为张量并确保在GPU上
+            if not isinstance(X, torch.Tensor):
+                X = torch.tensor(X, dtype=torch.float32).to(device)
+            elif X.device != device:
+                X = X.to(device)
+                
+            if not isinstance(Y, torch.Tensor):
+                Y = torch.tensor(Y, dtype=torch.float32).to(device)
+            elif Y.device != device:
+                Y = Y.to(device)
             
-        # 确保数据在GPU上
-        if not isinstance(X, torch.Tensor):
-            X = torch.tensor(X, dtype=torch.float32).to(device)
-        elif X.device != device:
-            X = X.to(device)
+            # 处理Y维度，确保其为列向量
+            if len(Y.shape) == 0:  # 如果Y是单个标量
+                Y = Y.reshape(1, 1)
+            elif len(Y.shape) == 1:  # 如果Y是一维张量
+                Y = Y.reshape(-1, 1)
             
-        if not isinstance(Y, torch.Tensor):
-            Y = torch.tensor(Y, dtype=torch.float32).to(device)
-        elif Y.device != device:
-            Y = Y.to(device)
-        
-        # 处理Y维度，确保其为列向量
-        if len(Y.shape) == 0:  # 如果Y是单个标量
-            Y = Y.reshape(1, 1)
-        elif len(Y.shape) == 1:  # 如果Y是一维张量
-            Y = Y.reshape(-1, 1)
+            # 算法3.2第6-8行: 全局模型处理
+            # 使用全局模型计算损失
+            f_RF_global, _, X_features_global = global_model.predict(X)
+            # 切断梯度
+            f_RF_global_detached = f_RF_global.detach()
+            X_features_global_detached = X_features_global.detach()
+            Y_detached = Y.detach()
             
-        # 确保模型参数需要梯度
-        global_model.regressor.requires_grad_(True)
-        local_model.regressor.requires_grad_(True)
+            # 计算损失
+            loss_diff_global = f_RF_global_detached - Y_detached
+            
+            # 手动计算梯度，避免依赖autograd
+            X_global_t = X_features_global_detached.t()
+            grad_global = (2.0 / X.shape[0]) * torch.matmul(X_global_t, loss_diff_global)
+            g_g = torch.norm(grad_global, p=2)
+            
+            # 释放中间变量
+            del f_RF_global, f_RF_global_detached, loss_diff_global, X_global_t
+            
+            # 算法3.2第9-12行: 混合模型处理
+            # 使用混合模型计算损失
+            f_RF_local, _, X_features_local = local_model.predict(X)
+            # 切断梯度
+            f_RF_local_detached = f_RF_local.detach()
+            X_features_local_detached = X_features_local.detach()
+            
+            # 计算损失
+            loss_diff_local = f_RF_local_detached - Y_detached
+            
+            # 手动计算梯度，避免依赖autograd
+            X_local_t = X_features_local_detached.t()
+            grad_local = (2.0 / X.shape[0]) * torch.matmul(X_local_t, loss_diff_local)
+            g_i = torch.norm(grad_local, p=2)
+            
+            # 释放中间变量
+            del f_RF_local, f_RF_local_detached, X_features_local
+            del X_features_local_detached, loss_diff_local, X_local_t
+            del X_features_global, X_features_global_detached, Y_detached
         
-        # 算法3.2第6-8行: 全局模型处理
-        # 使用全局模型计算损失
-        f_RF_global, _, X_features_global = global_model.predict(X)
-        loss_global = torch.mean((f_RF_global - Y)**2)  # 平均均方误差损失
-        
-        # 手动计算梯度，避免依赖autograd
-        X_global_t = X_features_global.t()
-        grad_global = (2.0 / X.shape[0]) * torch.matmul(X_global_t, (f_RF_global - Y))
-        g_g = torch.norm(grad_global, p=2)
-        
-        # 算法3.2第9-12行: 混合模型处理
-        # 使用混合模型计算损失
-        f_RF_local, _, X_features_local = local_model.predict(X)
-        loss_local = torch.mean((f_RF_local - Y)**2)  # 平均均方误差损失
-        
-        # 手动计算梯度，避免依赖autograd
-        X_local_t = X_features_local.t()
-        grad_local = (2.0 / X.shape[0]) * torch.matmul(X_local_t, (f_RF_local - Y))
-        g_i = torch.norm(grad_local, p=2)
-        
-        # print(f"全局模型梯度范数: {g_g.item()}, 本地模型梯度范数: {g_i.item()}")
-        
-        return g_g, g_i
+        # 返回梯度幅度，已切断梯度图
+        return g_g.detach(), g_i.detach()
     
     def local_update(self, f_RF_p, y, w, X_features):
         """
@@ -301,20 +329,32 @@ class FedGPAI_regression:
         elif w.device != device:
             w = w.to(device)
         
-        # 计算损失
-        loss = (f_RF_p - y)**2
-        
-        # 计算梯度
-        local_grad = 2 * (f_RF_p - y) * X_features
-        
-        # 更新回归器参数
-        self.regressor.data = self.regressor.data - self.eta * local_grad.mean(0).unsqueeze(1) - self.lam * self.regressor.data
-        
-        # 更新模型权重
-        w_new = w * torch.exp(-self.eta * loss)
-        
-        # 返回更新后的权重和本地梯度
-        return w_new, local_grad
+        # 使用no_grad包装非训练操作，减少计算图宾积
+        with torch.no_grad():
+            # 切断输入张量的梯度
+            f_RF_p_detached = f_RF_p.detach()
+            y_detached = y.detach() if isinstance(y, torch.Tensor) else y
+            X_features_detached = X_features.detach()
+            w_detached = w.detach()
+            
+            # 计算损失
+            loss = (f_RF_p_detached - y_detached)**2
+            
+            # 计算梯度
+            local_grad = 2 * (f_RF_p_detached - y_detached) * X_features_detached
+            
+            # 更新回归器参数 - 使用data属性避免跟踪计算图
+            regressor_update = self.eta * local_grad.mean(0).unsqueeze(1) + self.lam * self.regressor.data
+            self.regressor.data = self.regressor.data - regressor_update
+            
+            # 更新模型权重
+            w_new = w_detached * torch.exp(-self.eta * loss)
+            
+            # 释放不再需要的变量
+            del f_RF_p_detached, y_detached, regressor_update
+            
+        # 返回更新后的权重和本地梯度（已切断梯度）
+        return w_new, local_grad.detach()
     
     def global_update(self, agg_grad):
         """
@@ -421,54 +461,66 @@ class FedGPAI_regression:
         Returns:
             personalized_regressor: 个性化回归器
         """
-        # 确保数据在GPU上
-        if not isinstance(g_g, torch.Tensor):
-            g_g = torch.tensor(g_g, dtype=torch.float32).to(device)
-        elif g_g.device != device:
-            g_g = g_g.to(device)
+        # 使用torch.no_grad()上下文管理器来避免计算图的积累
+        with torch.no_grad():
+            # 切断输入梯度并确保在GPU上
+            g_g_detached = g_g.detach() if isinstance(g_g, torch.Tensor) else torch.tensor(g_g, dtype=torch.float32)
+            g_i_detached = g_i.detach() if isinstance(g_i, torch.Tensor) else torch.tensor(g_i, dtype=torch.float32)
+            global_regressor_detached = global_regressor.detach()
+            local_regressor_detached = local_regressor.detach()
             
-        if not isinstance(g_i, torch.Tensor):
-            g_i = torch.tensor(g_i, dtype=torch.float32).to(device)
-        elif g_i.device != device:
-            g_i = g_i.to(device)
+            # 移动到指定设备
+            if g_g_detached.device != device:
+                g_g_detached = g_g_detached.to(device)
+            if g_i_detached.device != device:
+                g_i_detached = g_i_detached.to(device)
+            if global_regressor_detached.device != device:
+                global_regressor_detached = global_regressor_detached.to(device)
+            if local_regressor_detached.device != device:
+                local_regressor_detached = local_regressor_detached.to(device)
             
-        if global_regressor.device != device:
-            global_regressor = global_regressor.to(device)
+            # 算法3.3第3-4行: 计算L2范数
+            epsilon = 1e-8  # 防止除零
+            L_g = torch.norm(g_g_detached, p=2)
+            L_i = torch.norm(g_i_detached, p=2)
             
-        if local_regressor.device != device:
-            local_regressor = local_regressor.to(device)
-        
-        # 算法3.3第3-4行: 计算L2范数
-        L_g = torch.norm(g_g, p=2)  # 全局模型梯度幅度的L2范数
-        L_i = torch.norm(g_i, p=2)  # 混合模型梯度幅度的L2范数
-        
-        # 创建用于存储个性化回归器参数的张量
-        personalized_regressor = torch.zeros_like(global_regressor).to(device)
-        
-        # 遍历处理回归器各项参数
-        epsilon = 1e-8  # 防止除零
-        
-        # 获取参数数量
-        param_count = global_regressor.numel()
-        
-        # 将回归器展平为一维向量方便遍历
-        global_flat = global_regressor.view(-1)
-        local_flat = local_regressor.view(-1)
-        pers_flat = personalized_regressor.view(-1)
-        
-        # 算法3.3第5-12行: 逐参数遍历
-        for j in range(param_count):
+            # 创建用于存储个性化回归器参数的张量
+            personalized_regressor = torch.zeros_like(global_regressor_detached)
+            
+            # 获取参数数量
+            param_count = global_regressor_detached.numel()
+            
+            # 将回归器展平为一维向量方便遍历
+            global_flat = global_regressor_detached.view(-1)
+            local_flat = local_regressor_detached.view(-1)
+            pers_flat = personalized_regressor.view(-1)
+            
+            # 更高效的向量化实现，避免循环
+            g_g_flat = g_g_detached.view(-1)
+            g_i_flat = g_i_detached.view(-1)
+            
+            # 确保所有向量大小兼容
+            g_g_indices = torch.arange(param_count) % g_g_flat.numel()
+            g_i_indices = torch.arange(param_count) % g_i_flat.numel()
+            
             # 算法3.3第7-8行: 归一化处理
-            g_g_j_norm = g_g.view(-1)[j % g_g.numel()] / (L_g + epsilon)
-            g_i_j_norm = g_i.view(-1)[j % g_i.numel()] / (L_i + epsilon)
+            g_g_norm = g_g_flat[g_g_indices] / (L_g + epsilon)
+            g_i_norm = g_i_flat[g_i_indices] / (L_i + epsilon)
             
             # 算法3.3第10行: 计算插值权重
-            alpha_j = 1.0 - g_i_j_norm / (g_i_j_norm + g_g_j_norm + epsilon)
+            alpha_j = 1.0 - g_i_norm / (g_i_norm + g_g_norm + epsilon)
             
-            # 算法3.3第12行: 调整融合比例
-            pers_flat[j] = alpha_j * local_flat[j] + (1.0 - alpha_j) * global_flat[j]
-        
-        # 恢复回归器原始形状
-        personalized_regressor = pers_flat.view_as(global_regressor)
-        
+            # 算法3.3第12行: 使用向量化操作替代循环
+            pers_flat = alpha_j * local_flat + (1.0 - alpha_j) * global_flat
+            
+            # 恢复回归器原始形状
+            personalized_regressor = pers_flat.view_as(global_regressor_detached)
+            
+            # 释放中间变量
+            del g_g_detached, g_i_detached, L_g, L_i, g_g_flat, g_i_flat
+            del g_g_indices, g_i_indices, g_g_norm, g_i_norm, alpha_j
+            del global_flat, local_flat, pers_flat
+            del global_regressor_detached, local_regressor_detached
+            
+        # 返回切断了梯度的个性化回归器
         return personalized_regressor

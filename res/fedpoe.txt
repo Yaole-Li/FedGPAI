@@ -1,13 +1,5 @@
 ❯ python air_fedpoe_pytorch.py
 正在加载 Air 数据集...
-/home/lyl/works/python_work/papers/fl/FedGPAI/lib/datasets/air/data_processor.py:10: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
-  data_Aotizhongxin = data_Aotizhongxin.replace(wind_direction[i], i).infer_objects(copy=False)
-/home/lyl/works/python_work/papers/fl/FedGPAI/lib/datasets/air/data_processor.py:19: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
-  data_Changping = data_Changping.replace(wind_direction[i], i).infer_objects(copy=False)
-/home/lyl/works/python_work/papers/fl/FedGPAI/lib/datasets/air/data_processor.py:28: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
-  data_Dingling = data_Dingling.replace(wind_direction[i], i).infer_objects(copy=False)
-/home/lyl/works/python_work/papers/fl/FedGPAI/lib/datasets/air/data_processor.py:37: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
-  data_Dongsi = data_Dongsi.replace(wind_direction[i], i).infer_objects(copy=False)
 初始化随机特征...
 使用设备: cuda:0
 开始FedPOE训练 (共20轮)...
@@ -169,3 +161,533 @@
 
 FedPOE的MSE为: 0.011541399173438549
 FedPOE的标准差为: 0.0048757619224488735
+
+-------------------------------------------------------------------
+❯ python air_fedpoe_pytorch.py
+正在加载 Air 数据集...
+/home/ubuntu/works/python_work/paper/fl/FedGPAI/lib/datasets/air/data_processor.py:10: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  data_Aotizhongxin = data_Aotizhongxin.replace(wind_direction[i], i).infer_objects(copy=False)
+/home/ubuntu/works/python_work/paper/fl/FedGPAI/lib/datasets/air/data_processor.py:19: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  data_Changping = data_Changping.replace(wind_direction[i], i).infer_objects(copy=False)
+/home/ubuntu/works/python_work/paper/fl/FedGPAI/lib/datasets/air/data_processor.py:28: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  data_Dingling = data_Dingling.replace(wind_direction[i], i).infer_objects(copy=False)
+/home/ubuntu/works/python_work/paper/fl/FedGPAI/lib/datasets/air/data_processor.py:37: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  data_Dongsi = data_Dongsi.replace(wind_direction[i], i).infer_objects(copy=False)
+初始化随机特征...
+开始FedPOE训练 (共50轮)...
+
+全局轮次 1/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 2/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 3/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 4/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 5/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 6/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 7/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 8/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 9/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 10/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 11/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 12/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 13/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 14/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 15/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 16/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 17/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 18/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 19/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 20/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 21/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 22/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 23/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 24/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 25/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 26/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 27/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 28/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 29/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 30/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 31/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 32/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 33/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 34/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 35/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 36/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 37/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 38/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 39/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 40/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 41/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 42/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 43/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 44/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 45/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 46/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 47/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 48/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 49/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 50/50
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+FedPOE的MSE为: 0.010515720583498478
+FedPOE的标准差为: 0.003890023333951831
+
+正在加载 Air 数据集...
+初始化随机特征...
+使用设备: cuda:0
+开始FedPOE训练 (共20轮)...
+
+全局轮次 1/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+  当前轮次 1 的MAE为: 0.101739
+  模型已保存到: checkpoints/fedpoe_checkpoint_epoch_1.pt
+
+全局轮次 2/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 3/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 4/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 5/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+  当前轮次 5 的MAE为: 0.099489
+  模型已保存到: checkpoints/fedpoe_checkpoint_epoch_5.pt
+
+全局轮次 6/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 7/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 8/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 9/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 10/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+  当前轮次 10 的MAE为: 0.098049
+  模型已保存到: checkpoints/fedpoe_checkpoint_epoch_10.pt
+
+全局轮次 11/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 12/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 13/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 14/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 15/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+  当前轮次 15 的MAE为: 0.096467
+  模型已保存到: checkpoints/fedpoe_checkpoint_epoch_15.pt
+
+全局轮次 16/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 17/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 18/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 19/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+全局轮次 20/20
+  训练进度: 样本 0/250
+  训练进度: 样本 50/250
+  训练进度: 样本 100/250
+  训练进度: 样本 150/250
+  训练进度: 样本 200/250
+
+  当前轮次 20 的MAE为: 0.095304
+  模型已保存到: checkpoints/fedpoe_checkpoint_epoch_20.pt
+
+FedPOE的MSE为: 0.009082809090614319
+FedPOE的标准差为: 0.0037730420008301735
