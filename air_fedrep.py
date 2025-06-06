@@ -28,7 +28,6 @@ parser.add_argument("--train_head_epochs", default=5, type=int, help="训练回�
 # 检查点相关参数
 parser.add_argument("--resume", action="store_true", help="是否从检查点继续训练")
 parser.add_argument("--checkpoint", type=str, default="", help="检查点文件路径")
-parser.add_argument("--save_dir", type=str, default="checkpoints/fedrep", help="保存模型的目录")
 
 args = parser.parse_args()
 
@@ -49,6 +48,12 @@ K = args.num_clients
 M *= K
 
 # 设置随机核参数
+
+# 创建保存模型的目录
+# 使用方法名称_数据集_客户端数量_全局联邦训练轮数作为文件夹名称
+checkpoint_dir = os.path.join("checkpoints", f"FedRep_{args.dataset}_{args.num_clients}_{args.global_rounds}")
+os.makedirs(checkpoint_dir, exist_ok=True)
+print(f"检查点将保存到: {checkpoint_dir}")
 print("初始化随机特征...")
 gamma = []
 num_rbf = 3
@@ -227,10 +232,6 @@ for cc in range(start_epoch, args.global_rounds):
     if (cc+1) % 5 == 0 or cc == 0:
         current_mae = torch.mean(torch.sqrt(mse[-1])).item()
         print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}")
-        
-        # 确保保存目录存在
-        checkpoint_dir = args.save_dir
-        os.makedirs(checkpoint_dir, exist_ok=True)
         
         # 构建检查点文件名和路径
         checkpoint_filename = f"epoch_{cc+1}.pt"

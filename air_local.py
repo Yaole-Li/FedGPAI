@@ -59,7 +59,10 @@ print(f"使用设备: {device}")
 w_local = [w.to(device) for w in w_local]
 
 # 创建保存模型的目录
-os.makedirs("checkpoints", exist_ok=True)
+# 使用方法名称_数据集_客户端数量_全局联邦训练轮数作为文件夹名称
+checkpoint_dir = os.path.join("checkpoints", f"Local_{args.dataset}_{args.num_clients}_{args.global_rounds}")
+os.makedirs(checkpoint_dir, exist_ok=True)
+print(f"检查点将保存到: {checkpoint_dir}")
 
 # 初始化性能评估指标
 mse_local = [torch.zeros((args.num_samples, 1), dtype=torch.float32).to(device) for _ in range(K)]
@@ -135,8 +138,10 @@ for cc in range(args.global_rounds):
             'mse': avg_mse.item(),
             'mae': current_mae
         }
-        torch.save(checkpoint, f"checkpoints/local_checkpoint_epoch_{cc+1}.pt")
-        print(f"  模型已保存到: checkpoints/local_checkpoint_epoch_{cc+1}.pt")
+        checkpoint_filename = f"epoch_{cc+1}.pt"
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+        torch.save(checkpoint, checkpoint_path)
+        print(f"  模型已保存到: {checkpoint_path}")
     
     # 清理显存
     if torch.cuda.is_available():

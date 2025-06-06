@@ -9,11 +9,11 @@ from lib.FedPOE.get_FedPOE_pytorch import get_FedPOE
 parser = argparse.ArgumentParser()
 
 # 数据集和任务相关参数
-parser.add_argument("--dataset", default='WEC', type=str, help="数据集名称")
+parser.add_argument("--dataset", default='Air', type=str, help="数据集名称")
 parser.add_argument("--task", default='regression', type=str, help="任务类型")
 
 # 客户端相关参数
-parser.add_argument("--num_clients", default=40, type=int, help="客户端数量")
+parser.add_argument("--num_clients", default=400, type=int, help="客户端数量")
 parser.add_argument("--num_samples", default=250, type=int, help="每个客户端的样本数量")
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
@@ -58,7 +58,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"使用设备: {device}")
 
 # 创建保存模型的目录
-os.makedirs("checkpoints", exist_ok=True)
+# 使用方法名称_数据集_客户端数量_全局联邦训练轮数作为文件夹名称
+checkpoint_dir = os.path.join("checkpoints", f"FedPOE_{args.dataset}_{args.num_clients}_{args.global_rounds}")
+os.makedirs(checkpoint_dir, exist_ok=True)
+print(f"检查点将保存到: {checkpoint_dir}")
 
 w = w.to(device)
 w_loc = w_loc.to(device)
@@ -163,8 +166,10 @@ for cc in range(args.global_rounds):
             'mse': mse[-1].item(),
             'mae': current_mae
         }
-        torch.save(checkpoint, f"checkpoints/fedpoe_checkpoint_epoch_{cc+1}.pt")
-        print(f"  模型已保存到: checkpoints/fedpoe_checkpoint_epoch_{cc+1}.pt")
+        checkpoint_filename = f"epoch_{cc+1}.pt"
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+        torch.save(checkpoint, checkpoint_path)
+        print(f"  模型已保存到: {checkpoint_path}")
     
     # 清理显存
     if torch.cuda.is_available():

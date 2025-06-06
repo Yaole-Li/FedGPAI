@@ -371,6 +371,7 @@ FedGPAI的标准差为：0.005381516180932522
 
 -------------------------------------------------------------
 ❯ python air.py
+FedGPAI_Air_400_20
 正在加载 Air 数据集...
 /home/lyl/works/python_work/papers/fl/FedGPAI/lib/datasets/air/data_processor.py:10: FutureWarning: Downcasting behavior in `replace` is deprecated and will be removed in a future version. To retain the old behavior, explicitly call `result.infer_objects(copy=False)`. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
   data_Aotizhongxin = data_Aotizhongxin.replace(wind_direction[i], i).infer_objects(copy=False)
