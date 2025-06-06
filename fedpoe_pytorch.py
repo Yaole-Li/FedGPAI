@@ -9,7 +9,7 @@ from lib.FedPOE.get_FedPOE_pytorch import get_FedPOE
 parser = argparse.ArgumentParser()
 
 # 数据集和任务相关参数
-parser.add_argument("--dataset", default='Air', type=str, help="数据集名称")
+parser.add_argument("--dataset", default='WEC', type=str, help="数据集名称")
 parser.add_argument("--task", default='regression', type=str, help="任务类型")
 
 # 客户端相关参数

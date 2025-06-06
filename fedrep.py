@@ -65,7 +65,7 @@ gamma = np.array(gamma)
 n_components = args.num_random_features
 
 # 创建保存模型的目录
-os.makedirs(args.save_dir, exist_ok=True)
+os.makedirs(checkpoint_dir, exist_ok=True)
 
 # 初始化变量
 start_epoch = 0
