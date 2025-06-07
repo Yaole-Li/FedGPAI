@@ -22,7 +22,6 @@ multirun
 *.pkl
 
 # output files
-*.csv
 *.json
 *.png
 *.pt
