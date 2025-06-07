@@ -432,7 +432,7 @@ class FedGPAI_regression:
                 if grad.shape == self.feature_extractor.shape:
                     fe_update += (grad / len(processed_grads))
                 else:
-                    print(f"\u8b66告: 特征提取器梯度形状 {grad.shape} 与特征提取器 {self.feature_extractor.shape} 不匹配")
+                    print(f"警告: 特征提取器梯度形状 {grad.shape} 与特征提取器 {self.feature_extractor.shape} 不匹配")
                     # 尝试调整大小
                     try:
                         resized_grad = F.interpolate(grad.unsqueeze(0).unsqueeze(0), 

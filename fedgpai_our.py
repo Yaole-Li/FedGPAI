@@ -45,7 +45,7 @@ def track_tensors():
 parser = argparse.ArgumentParser()
 
 # 数据集和任务相关参数
-parser.add_argument("--dataset", default='Air', type=str, help="数据集名称")
+parser.add_argument("--dataset", default='WEC', type=str, help="数据集名称")
 parser.add_argument("--task", default='regression', type=str, help="任务类型")
 
 # 客户端相关参数
@@ -109,6 +109,21 @@ b = b.to(device)
 checkpoint_dir = os.path.join("checkpoints", f"FedGPAI_{args.dataset}_{args.num_clients}_{args.global_rounds}")
 os.makedirs(checkpoint_dir, exist_ok=True)
 print(f"检查点将保存到: {checkpoint_dir}")
+
+# 创建日志文件
+log_file_name = f"FedGPAI_{args.dataset}_{args.num_clients}_{args.global_rounds}.txt"
+log_file_path = os.path.join(checkpoint_dir, log_file_name)
+
+# 记录训练起始信息到日志
+with open(log_file_path, 'w') as log_file:
+    log_file.write(f"===== 训练开始 =====\n")
+    log_file.write(f"方法: FedGPAI\n")
+    log_file.write(f"数据集: {args.dataset}\n")
+    log_file.write(f"客户端数量: {args.num_clients}\n")
+    log_file.write(f"全局训练轮数: {args.global_rounds}\n")
+    log_file.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+print(f"日志将保存到: {log_file_path}")
 
 # 初始化变量
 start_epoch = 0
@@ -297,6 +312,13 @@ for cc in range(start_epoch, args.global_rounds):
         current_mae = torch.mean(torch.sqrt(mse[-1])).item()
         print(f"\n  当前轮次 {cc+1} 的MSE为: {current_mse:.6f}, MAE为: {current_mae:.6f}")
         
+        # 将结果写入日志文件
+        with open(log_file_path, 'a') as log_file:
+            log_file.write(f"轮次 {cc+1}/{args.global_rounds}\n")
+            log_file.write(f"MSE: {current_mse:.6f}\n")
+            log_file.write(f"MAE: {current_mae:.6f}\n")
+            log_file.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
         # 保存模型
         checkpoint_filename = f"epoch_{cc+1}.pt"
         checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
@@ -312,6 +334,7 @@ for cc in range(start_epoch, args.global_rounds):
         }
         torch.save(checkpoint, checkpoint_path)
         print(f"  模型已保存到: {checkpoint_path}")
+        print(f"  结果已记录到: {log_file_path}")
     
     # 每轮结束后清理内存
     if torch.cuda.is_available():
@@ -328,5 +351,14 @@ for cc in range(start_epoch, args.global_rounds):
         torch.cuda.empty_cache()
 
 # 打印最终结果
-print('FedGPAI的MSE为：%s' % mse[-1].item())
-print('FedGPAI的标准差为：%s' % torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item())
+final_mse = mse[-1].item()
+final_std = torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item()
+print('FedGPAI的MSE为：%s' % final_mse)
+print('FedGPAI的标准差为：%s' % final_std)
+
+# 记录最终结果到日志
+with open(log_file_path, 'a') as log_file:
+    log_file.write(f"===== 训练结束 =====\n")
+    log_file.write(f"最终MSE: {final_mse:.6f}\n")
+    log_file.write(f"标准差: {final_std:.6f}\n")
+    log_file.write(f"完成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")

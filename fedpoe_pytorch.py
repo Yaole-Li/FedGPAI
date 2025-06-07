@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import os
 import gc
+import time
 from lib.datasets.data_loader import data_loader
 from lib.FedPOE.get_FedPOE_pytorch import get_FedPOE
 
@@ -62,6 +63,21 @@ print(f"使用设备: {device}")
 checkpoint_dir = os.path.join("checkpoints", f"FedPOE_{args.dataset}_{args.num_clients}_{args.global_rounds}")
 os.makedirs(checkpoint_dir, exist_ok=True)
 print(f"检查点将保存到: {checkpoint_dir}")
+
+# 创建日志文件
+log_file_name = f"FedPOE_{args.dataset}_{args.num_clients}_{args.global_rounds}.txt"
+log_file_path = os.path.join(checkpoint_dir, log_file_name)
+
+# 记录训练起始信息到日志
+with open(log_file_path, 'w') as log_file:
+    log_file.write(f"===== 训练开始 =====\n")
+    log_file.write(f"方法: FedPOE\n")
+    log_file.write(f"数据集: {args.dataset}\n")
+    log_file.write(f"客户端数量: {args.num_clients}\n")
+    log_file.write(f"全局训练轮数: {args.global_rounds}\n")
+    log_file.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+print(f"日志将保存到: {log_file_path}")
 
 w = w.to(device)
 w_loc = w_loc.to(device)
@@ -152,8 +168,16 @@ for cc in range(args.global_rounds):
     
     # 每5轮计算并输出一次MAE
     if (cc+1) % 5 == 0 or cc == 0:
+        current_mse = mse[-1].item()
         current_mae = torch.mean(torch.sqrt(mse[-1])).item()
-        print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}")
+        print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}, MSE为: {current_mse:.6f}")
+        
+        # 将结果写入日志文件
+        with open(log_file_path, 'a') as log_file:
+            log_file.write(f"轮次 {cc+1}/{args.global_rounds}\n")
+            log_file.write(f"MSE: {current_mse:.6f}\n")
+            log_file.write(f"MAE: {current_mae:.6f}\n")
+            log_file.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
         # 保存模型
         checkpoint = {
@@ -170,6 +194,7 @@ for cc in range(args.global_rounds):
         checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
         torch.save(checkpoint, checkpoint_path)
         print(f"  模型已保存到: {checkpoint_path}")
+        print(f"  结果已记录到: {log_file_path}")
     
     # 清理显存
     if torch.cuda.is_available():
@@ -177,5 +202,14 @@ for cc in range(args.global_rounds):
     gc.collect()
 
 # 打印最终结果
-print(f'\nFedPOE的MSE为: {mse[-1].item()}')
-print(f'FedPOE的标准差为: {torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item()}')
+final_mse = mse[-1].item()
+final_std = torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item()
+print(f'\nFedPOE的MSE为: {final_mse}')
+print(f'FedPOE的标准差为: {final_std}')
+
+# 记录最终结果到日志
+with open(log_file_path, 'a') as log_file:
+    log_file.write(f"===== 训练结束 =====\n")
+    log_file.write(f"最终MSE: {final_mse:.6f}\n")
+    log_file.write(f"标准差: {final_std:.6f}\n")
+    log_file.write(f"完成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
