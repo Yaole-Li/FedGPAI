@@ -15,7 +15,7 @@ parser.add_argument("--dataset", default='Air', type=str, help="数据集名称"
 parser.add_argument("--task", default='regression', type=str, help="任务类型")
 
 # 客户端相关参数
-parser.add_argument("--num_clients", default=40, type=int, help="客户端数量")
+parser.add_argument("--num_clients", default=400, type=int, help="客户端数量")
 parser.add_argument("--num_samples", default=250, type=int, help="每个客户端的样本数量")
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
@@ -23,7 +23,7 @@ parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比�
 parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
 parser.add_argument("--global_rounds", default=20, type=int, help="全局联邦训练轮数")
-parser.add_argument("--local_rounds", default=10, type=int, help="本地训练轮数")
+parser.add_argument("--local_rounds", default=5, type=int, help="本地训练轮数")
 parser.add_argument("--train_head_epochs", default=5, type=int, help="训练回归器的轮数")
 
 # 检查点相关参数
