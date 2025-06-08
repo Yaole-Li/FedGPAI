@@ -4,6 +4,7 @@ import torch
 import os
 import gc
 import time
+import matplotlib.pyplot as plt
 from lib.datasets.data_loader import data_loader
 from lib.FedGPAI.get_FedGPAI import get_FedGPAI
 
@@ -60,8 +61,9 @@ print(f"使用设备: {device}")
 w_local = [w.to(device) for w in w_local]
 
 # 创建保存模型的目录
-# 使用方法名称_数据集_客户端数量_全局联邦训练轮数作为文件夹名称
-checkpoint_dir = os.path.join("checkpoints", f"Local_{args.dataset}_{args.num_clients}_{args.global_rounds}")
+# 使用方法名称_数据集_客户端数量_全局联邦训练轮数_时间戳作为文件夹名称
+current_time = time.strftime('%Y%m%d_%H%M%S')
+checkpoint_dir = os.path.join("checkpoints", f"Local_{args.dataset}_{args.num_clients}_{args.global_rounds}_{current_time}")
 os.makedirs(checkpoint_dir, exist_ok=True)
 print(f"检查点将保存到: {checkpoint_dir}")
 
@@ -83,6 +85,11 @@ print(f"日志将保存到: {log_file_path}")
 # 初始化性能评估指标
 mse_local = [torch.zeros((args.num_samples, 1), dtype=torch.float32).to(device) for _ in range(K)]
 m_local = [torch.zeros((args.num_samples, args.global_rounds), dtype=torch.float32).to(device) for _ in range(K)]
+
+# 跟踪训练过程中的MSE和MAE
+mse_history = []
+mae_history = []
+rounds_history = []
 
 print(f"开始本地训练 (每个客户端独立训练 {args.global_rounds} 轮)...")
 
@@ -141,11 +148,16 @@ for cc in range(args.global_rounds):
     # 计算所有客户端的平均MSE，用于显示
     avg_mse = torch.mean(torch.stack([mse[args.num_samples-1, 0] for mse in mse_local]))
     
+    # 每轮记录MSE和MAE
+    current_mse = avg_mse.item()
+    current_mae = torch.mean(torch.sqrt(avg_mse)).item()
+    mse_history.append(current_mse)
+    mae_history.append(current_mae)
+    rounds_history.append(cc+1)
+    
     # 每5轮计算并输出一次MAE和MSE
     if (cc+1) % 5 == 0 or cc == 0:
-        current_mse = avg_mse.item()
-        current_mae = torch.mean(torch.sqrt(avg_mse)).item()
-        print(f"\n  当前轮次 {cc+1} 的平均MAE为: {current_mae:.6f}, MSE为: {current_mse:.6f}")
+        print(f"\n  Round {cc+1} - MSE: {current_mse:.6f}, MAE: {current_mae:.6f}")
         
         # 将结果写入日志文件
         with open(log_file_path, 'a') as log_file:
@@ -178,22 +190,50 @@ final_mse_per_client = [mse[args.num_samples-1, 0].item() for mse in mse_local]
 final_mse = np.mean(final_mse_per_client)
 final_std = np.std(final_mse_per_client)
 
+# 绘制和保存MSE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(rounds_history, mse_history, 'b-o')
+plt.xlabel('Round')
+plt.ylabel('Mean Squared Error (MSE)')
+plt.title('Local Training MSE over Rounds')
+plt.grid(True)
+plt.tight_layout()
+mse_plot_path = os.path.join(checkpoint_dir, 'mse_curve.png')
+plt.savefig(mse_plot_path)
+plt.close()
+
+# 绘制和保存MAE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(rounds_history, mae_history, 'r-o')
+plt.xlabel('Round')
+plt.ylabel('Mean Absolute Error (MAE)')
+plt.title('Local Training MAE over Rounds')
+plt.grid(True)
+plt.tight_layout()
+mae_plot_path = os.path.join(checkpoint_dir, 'mae_curve.png')
+plt.savefig(mae_plot_path)
+plt.close()
+
 # 打印最终结果
-print('\n====================== 本地训练结果 ======================')
-print(f'所有客户端平均MSE: {final_mse:.6f}')
-print(f'所有客户端标准差: {final_std:.6f}')
+print('\n====================== Local Training Results ======================')
+print(f'Average MSE across all clients: {final_mse:.6f}')
+print(f'Standard deviation: {final_std:.6f}')
+print(f'MSE curve saved to: {mse_plot_path}')
+print(f'MAE curve saved to: {mae_plot_path}')
 
 # 打印每个客户端的MSE统计信息
-print(f'\n客户端MSE最小值: {np.min(final_mse_per_client):.6f}')
-print(f'客户端MSE最大值: {np.max(final_mse_per_client):.6f}')
-print(f'客户端MSE中位数: {np.median(final_mse_per_client):.6f}')
+print(f'\nMinimum client MSE: {np.min(final_mse_per_client):.6f}')
+print(f'Maximum client MSE: {np.max(final_mse_per_client):.6f}')
+print(f'Median client MSE: {np.median(final_mse_per_client):.6f}')
 
 # 记录最终结果到日志
 with open(log_file_path, 'a') as log_file:
-    log_file.write(f"===== 训练结束 =====\n")
-    log_file.write(f"最终平均MSE: {final_mse:.6f}\n")
-    log_file.write(f"标准差: {final_std:.6f}\n")
-    log_file.write(f"客户端MSE最小值: {np.min(final_mse_per_client):.6f}\n")
-    log_file.write(f"客户端MSE最大值: {np.max(final_mse_per_client):.6f}\n")
-    log_file.write(f"客户端MSE中位数: {np.median(final_mse_per_client):.6f}\n")
-    log_file.write(f"完成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    log_file.write(f"===== Training Completed =====\n")
+    log_file.write(f"Final average MSE: {final_mse:.6f}\n")
+    log_file.write(f"Standard deviation: {final_std:.6f}\n")
+    log_file.write(f"Minimum client MSE: {np.min(final_mse_per_client):.6f}\n")
+    log_file.write(f"Maximum client MSE: {np.max(final_mse_per_client):.6f}\n")
+    log_file.write(f"Median client MSE: {np.median(final_mse_per_client):.6f}\n")
+    log_file.write(f"MSE curve saved to: {mse_plot_path}\n")
+    log_file.write(f"MAE curve saved to: {mae_plot_path}\n")
+    log_file.write(f"Completion Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")

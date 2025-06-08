@@ -174,8 +174,9 @@ for k in range(K):
     # 设置初始权重为全局权重
     clients[k]['model'].load_state_dict(copy.deepcopy(global_weights))
 
-# 创建检查点目录
-checkpoint_dir = f"checkpoints/FedAvg_{args.dataset}_{args.num_clients}_{args.global_rounds}"
+# 创建检查点目录（加上时间戳）
+current_time = time.strftime('%Y%m%d_%H%M%S')
+checkpoint_dir = f"checkpoints/FedAvg_{args.dataset}_{args.num_clients}_{args.global_rounds}_{current_time}"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 # 设置日志文件
@@ -304,26 +305,32 @@ for round in range(start_round, args.global_rounds):
 # 保存最终结果
 print("\n训练完成，保存结果...")
 
-# 绘制损失曲线
-plt.figure(figsize=(10, 5))
-plt.subplot(1, 2, 1)
-plt.plot(range(1, len(train_loss_history) + 1), train_loss_history, label='Train Loss')
-plt.plot(range(1, len(test_loss_history) + 1), test_loss_history, label='Test MSE')
+# 绘制MSE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(range(1, len(test_loss_history) + 1), test_loss_history, 'b-o')
 plt.xlabel('Round')
-plt.ylabel('Loss')
-plt.title('Train and Test Loss')
-plt.legend()
-
-plt.subplot(1, 2, 2)
-plt.plot(range(1, len(test_mae_history) + 1), test_mae_history, label='Test MAE')
-plt.xlabel('Round')
-plt.ylabel('MAE')
-plt.title('Test MAE')
-plt.legend()
-
+plt.ylabel('Mean Squared Error (MSE)')
+plt.title('FedAvg Training MSE over Rounds')
+plt.grid(True)
 plt.tight_layout()
-plt.savefig(f"{checkpoint_dir}/loss_curves.png")
-print(f"Loss curves saved to {checkpoint_dir}/loss_curves.png")
+mse_plot_path = os.path.join(checkpoint_dir, 'mse_curve.png')
+plt.savefig(mse_plot_path)
+plt.close()
+
+# 绘制MAE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(range(1, len(test_mae_history) + 1), test_mae_history, 'r-o')
+plt.xlabel('Round')
+plt.ylabel('Mean Absolute Error (MAE)')
+plt.title('FedAvg Training MAE over Rounds')
+plt.grid(True)
+plt.tight_layout()
+mae_plot_path = os.path.join(checkpoint_dir, 'mae_curve.png')
+plt.savefig(mae_plot_path)
+plt.close()
+
+print(f"MSE curve saved to {mse_plot_path}")
+print(f"MAE curve saved to {mae_plot_path}")
 
 # 打印最终结果
 final_test_mse = test_loss_history[-1]
@@ -333,8 +340,11 @@ print(f"FedAvg final test MAE: {final_test_mae:.6f}")
 
 # 将最终结果写入日志
 with open(log_file, 'a') as f:
-    f.write("\n最终结果\n")
-    f.write(f"FedAvg的最终测试MSE: {final_test_mse:.6f}\n")
-    f.write(f"FedAvg的最终测试MAE: {final_test_mae:.6f}\n")
+    f.write("\n===== Training Completed =====\n")
+    f.write(f"Final test MSE: {final_test_mse:.6f}\n")
+    f.write(f"Final test MAE: {final_test_mae:.6f}\n")
+    f.write(f"MSE curve saved to: {mse_plot_path}\n")
+    f.write(f"MAE curve saved to: {mae_plot_path}\n")
+    f.write(f"Completion Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
 print("\n训练结束!")

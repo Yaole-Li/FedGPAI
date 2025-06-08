@@ -4,6 +4,7 @@ import torch
 import os
 import gc
 import time
+import matplotlib.pyplot as plt
 from lib.datasets.data_loader import data_loader
 from lib.FedGPAI.FedGPAI_regression import FedGPAI_regression
 
@@ -51,8 +52,9 @@ M *= K
 # 设置随机核参数
 
 # 创建保存模型的目录
-# 使用方法名称_数据集_客户端数量_全局联邦训练轮数作为文件夹名称
-checkpoint_dir = os.path.join("checkpoints", f"FedRep_{args.dataset}_{args.num_clients}_{args.global_rounds}")
+# 使用方法名称_数据集_客户端数量_全局联邦训练轮数_时间戳作为文件夹名称
+current_time = time.strftime('%Y%m%d_%H%M%S')
+checkpoint_dir = os.path.join("checkpoints", f"FedRep_{args.dataset}_{args.num_clients}_{args.global_rounds}_{current_time}")
 os.makedirs(checkpoint_dir, exist_ok=True)
 print(f"检查点将保存到: {checkpoint_dir}")
 
@@ -89,6 +91,11 @@ start_epoch = 0
 # 初始化性能评估指标
 mse = torch.zeros((args.num_samples, 1), dtype=torch.float32).to(device)
 m = torch.zeros((K, args.num_samples, args.global_rounds), dtype=torch.float32).to(device)
+
+# 跟踪训练过程中的MSE和MAE
+mse_history = []
+mae_history = []
+rounds_history = []
 
 
 def get_fedrep_models(random_features, args):
@@ -244,11 +251,16 @@ for cc in range(start_epoch, args.global_rounds):
     # 计算平均误差
     mse = (1/(cc+1)) * ((cc*mse)+torch.reshape(torch.mean(e, dim=1), (-1, 1)))
     
+    # 每轮记录MSE和MAE
+    current_mse = mse[-1].item()
+    current_mae = torch.mean(torch.sqrt(mse[-1])).item()
+    mse_history.append(current_mse)
+    mae_history.append(current_mae)
+    rounds_history.append(cc+1)
+    
     # 每5轮计算并输出一次MAE和MSE
     if (cc+1) % 5 == 0 or cc == 0:
-        current_mse = mse[-1].item()
-        current_mae = torch.mean(torch.sqrt(mse[-1])).item()
-        print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}, MSE为: {current_mse:.6f}")
+        print(f"\n  Round {cc+1} - MSE: {current_mse:.6f}, MAE: {current_mae:.6f}")
         
         # 将结果写入日志文件
         with open(log_file_path, 'a') as log_file:
@@ -278,15 +290,43 @@ for cc in range(start_epoch, args.global_rounds):
         torch.cuda.empty_cache()
     gc.collect()
 
+# 绘制和保存MSE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(rounds_history, mse_history, 'b-o')
+plt.xlabel('Round')
+plt.ylabel('Mean Squared Error (MSE)')
+plt.title('FedRep Training MSE over Rounds')
+plt.grid(True)
+plt.tight_layout()
+mse_plot_path = os.path.join(checkpoint_dir, 'mse_curve.png')
+plt.savefig(mse_plot_path)
+plt.close()
+
+# 绘制和保存MAE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(rounds_history, mae_history, 'r-o')
+plt.xlabel('Round')
+plt.ylabel('Mean Absolute Error (MAE)')
+plt.title('FedRep Training MAE over Rounds')
+plt.grid(True)
+plt.tight_layout()
+mae_plot_path = os.path.join(checkpoint_dir, 'mae_curve.png')
+plt.savefig(mae_plot_path)
+plt.close()
+
 # 打印最终结果
 final_mse = mse[-1].item()
 final_std = torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item()
-print('FedRep的MSE为：%s' % final_mse)
-print('FedRep的标准差为：%s' % final_std)
+print(f'FedRep final MSE: {final_mse:.6f}')
+print(f'FedRep standard deviation: {final_std:.6f}')
+print(f'MSE curve saved to: {mse_plot_path}')
+print(f'MAE curve saved to: {mae_plot_path}')
 
 # 记录最终结果到日志
 with open(log_file_path, 'a') as log_file:
-    log_file.write(f"===== 训练结束 =====\n")
-    log_file.write(f"最终MSE: {final_mse:.6f}\n")
-    log_file.write(f"标准差: {final_std:.6f}\n")
-    log_file.write(f"完成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    log_file.write(f"===== Training Completed =====\n")
+    log_file.write(f"Final MSE: {final_mse:.6f}\n")
+    log_file.write(f"Standard Deviation: {final_std:.6f}\n")
+    log_file.write(f"MSE curve saved to: {mse_plot_path}\n")
+    log_file.write(f"MAE curve saved to: {mae_plot_path}\n")
+    log_file.write(f"Completion Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")

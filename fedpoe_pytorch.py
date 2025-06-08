@@ -4,6 +4,7 @@ import numpy as np
 import os
 import gc
 import time
+import matplotlib.pyplot as plt
 from lib.datasets.data_loader import data_loader
 from lib.FedPOE.get_FedPOE_pytorch import get_FedPOE
 
@@ -58,14 +59,14 @@ b = torch.ones((K, 1), dtype=torch.float32)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"使用设备: {device}")
 
-# 创建保存模型的目录
-# 使用方法名称_数据集_客户端数量_全局联邦训练轮数作为文件夹名称
-checkpoint_dir = os.path.join("checkpoints", f"FedPOE_{args.dataset}_{args.num_clients}_{args.global_rounds}")
+# 创建保存模型的目录（加上时间戳）
+current_time = time.strftime('%Y%m%d_%H%M%S')
+checkpoint_dir = os.path.join("checkpoints", f"FedPOE_{args.dataset}_{args.num_clients}_{args.global_rounds}_{current_time}")
 os.makedirs(checkpoint_dir, exist_ok=True)
 print(f"检查点将保存到: {checkpoint_dir}")
 
 # 创建日志文件
-log_file_name = f"FedPOE_{args.dataset}_{args.num_clients}_{args.global_rounds}.txt"
+log_file_name = f"FedPOE_{args.dataset}_{args.num_clients}_{args.global_rounds}_{current_time}.txt"
 log_file_path = os.path.join(checkpoint_dir, log_file_name)
 
 # 记录训练起始信息到日志
@@ -87,6 +88,11 @@ b = b.to(device)
 # 初始化评估指标
 mse = torch.zeros((args.num_samples, 1), dtype=torch.float32).to(device)
 m = torch.zeros((K, args.num_samples, args.global_rounds), dtype=torch.float32).to(device)
+
+# 跟踪训练过程中的MSE和MAE
+mse_history = []
+mae_history = []
+rounds_history = []
 
 print(f"开始FedPOE训练 (共{args.global_rounds}轮)...")
 for cc in range(args.global_rounds):
@@ -166,11 +172,16 @@ for cc in range(args.global_rounds):
     # 更新总体MSE
     mse = (1 / (cc + 1)) * ((cc * mse) + torch.reshape(torch.mean(e, dim=1), (-1, 1)))
     
+    # 每轮记录MSE和MAE
+    current_mse = mse[-1].item()
+    current_mae = torch.mean(torch.sqrt(mse[-1])).item()
+    mse_history.append(current_mse)
+    mae_history.append(current_mae)
+    rounds_history.append(cc+1)
+    
     # 每5轮计算并输出一次MAE
     if (cc+1) % 5 == 0 or cc == 0:
-        current_mse = mse[-1].item()
-        current_mae = torch.mean(torch.sqrt(mse[-1])).item()
-        print(f"\n  当前轮次 {cc+1} 的MAE为: {current_mae:.6f}, MSE为: {current_mse:.6f}")
+        print(f"\n  Round {cc+1} - MSE: {current_mse:.6f}, MAE: {current_mae:.6f}")
         
         # 将结果写入日志文件
         with open(log_file_path, 'a') as log_file:
@@ -201,15 +212,43 @@ for cc in range(args.global_rounds):
         torch.cuda.empty_cache()
     gc.collect()
 
+# 绘制和保存MSE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(rounds_history, mse_history, 'b-o')
+plt.xlabel('Round')
+plt.ylabel('Mean Squared Error (MSE)')
+plt.title('FedPOE Training MSE over Rounds')
+plt.grid(True)
+plt.tight_layout()
+mse_plot_path = os.path.join(checkpoint_dir, 'mse_curve.png')
+plt.savefig(mse_plot_path)
+plt.close()
+
+# 绘制和保存MAE曲线
+plt.figure(figsize=(10, 6))
+plt.plot(rounds_history, mae_history, 'r-o')
+plt.xlabel('Round')
+plt.ylabel('Mean Absolute Error (MAE)')
+plt.title('FedPOE Training MAE over Rounds')
+plt.grid(True)
+plt.tight_layout()
+mae_plot_path = os.path.join(checkpoint_dir, 'mae_curve.png')
+plt.savefig(mae_plot_path)
+plt.close()
+
 # 打印最终结果
 final_mse = mse[-1].item()
 final_std = torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item()
-print(f'\nFedPOE的MSE为: {final_mse}')
-print(f'FedPOE的标准差为: {final_std}')
+print(f'FedPOE final MSE: {final_mse:.6f}')
+print(f'FedPOE standard deviation: {final_std:.6f}')
+print(f'MSE curve saved to: {mse_plot_path}')
+print(f'MAE curve saved to: {mae_plot_path}')
 
 # 记录最终结果到日志
 with open(log_file_path, 'a') as log_file:
-    log_file.write(f"===== 训练结束 =====\n")
-    log_file.write(f"最终MSE: {final_mse:.6f}\n")
-    log_file.write(f"标准差: {final_std:.6f}\n")
-    log_file.write(f"完成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    log_file.write(f"===== Training Completed =====\n")
+    log_file.write(f"Final MSE: {final_mse:.6f}\n")
+    log_file.write(f"Standard Deviation: {final_std:.6f}\n")
+    log_file.write(f"MSE curve saved to: {mse_plot_path}\n")
+    log_file.write(f"MAE curve saved to: {mae_plot_path}\n")
+    log_file.write(f"Completion Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
