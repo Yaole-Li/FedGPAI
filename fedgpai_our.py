@@ -73,6 +73,16 @@ args.eta = 1/np.sqrt(args.num_samples)
 print(f"正在加载 {args.dataset} 数据集...")
 X, Y = data_loader(args)
 
+# 初始化设备
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"使用设备: {device}")
+
+# 将NumPy数组转换为PyTorch张量并移至正确的设备
+print(f"将数据转换为PyTorch张量并移至 {device} 设备...")
+for i in range(len(X)):
+    X[i] = torch.tensor(X[i], dtype=torch.float32, device=device)
+    Y[i] = torch.tensor(Y[i], dtype=torch.float32, device=device)
+
 # 获取数据维度
 M, N = X[0].shape
 K = args.num_clients
@@ -102,10 +112,6 @@ mse = torch.zeros((1, 1), dtype=torch.float32)
 mse_history = []
 mae_history = []
 rounds_history = []
-
-# 初始化设备
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(f"使用设备: {device}")
 
 # 将所有张量移到相应设备
 w = w.to(device)
