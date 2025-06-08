@@ -94,6 +94,10 @@ mse_history = []
 mae_history = []
 rounds_history = []
 
+# 跟踪最小值
+best_mse = float('inf')
+best_mae = float('inf')
+
 print(f"开始FedPOE训练 (共{args.global_rounds}轮)...")
 for cc in range(args.global_rounds):
     print(f"\n全局轮次 {cc+1}/{args.global_rounds}")
@@ -179,6 +183,10 @@ for cc in range(args.global_rounds):
     mae_history.append(current_mae)
     rounds_history.append(cc+1)
     
+    # 更新最小值
+    best_mse = min(best_mse, current_mse)
+    best_mae = min(best_mae, current_mae)
+    
     # 每5轮计算并输出一次MAE
     if (cc+1) % 5 == 0 or cc == 0:
         print(f"\n  Round {cc+1} - MSE: {current_mse:.6f}, MAE: {current_mae:.6f}")
@@ -238,8 +246,12 @@ plt.close()
 
 # 打印最终结果
 final_mse = mse[-1].item()
+final_mae = torch.mean(torch.sqrt(mse[-1])).item()
 final_std = torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item()
 print(f'FedPOE final MSE: {final_mse:.6f}')
+print(f'FedPOE final MAE: {final_mae:.6f}')
+print(f'FedPOE best MSE: {best_mse:.6f}')
+print(f'FedPOE best MAE: {best_mae:.6f}')
 print(f'FedPOE standard deviation: {final_std:.6f}')
 print(f'MSE curve saved to: {mse_plot_path}')
 print(f'MAE curve saved to: {mae_plot_path}')
@@ -248,6 +260,9 @@ print(f'MAE curve saved to: {mae_plot_path}')
 with open(log_file_path, 'a') as log_file:
     log_file.write(f"===== Training Completed =====\n")
     log_file.write(f"Final MSE: {final_mse:.6f}\n")
+    log_file.write(f"Final MAE: {final_mae:.6f}\n")
+    log_file.write(f"Best MSE: {best_mse:.6f}\n")
+    log_file.write(f"Best MAE: {best_mae:.6f}\n")
     log_file.write(f"Standard Deviation: {final_std:.6f}\n")
     log_file.write(f"MSE curve saved to: {mse_plot_path}\n")
     log_file.write(f"MAE curve saved to: {mae_plot_path}\n")

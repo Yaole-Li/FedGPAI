@@ -91,6 +91,10 @@ mse_history = []
 mae_history = []
 rounds_history = []
 
+# 跟踪最小值
+best_mse = float('inf')
+best_mae = float('inf')
+
 print(f"开始本地训练 (每个客户端独立训练 {args.global_rounds} 轮)...")
 
 # 执行本地训练过程 - 每个客户端完全独立
@@ -155,6 +159,10 @@ for cc in range(args.global_rounds):
     mae_history.append(current_mae)
     rounds_history.append(cc+1)
     
+    # 更新最小值
+    best_mse = min(best_mse, current_mse)
+    best_mae = min(best_mae, current_mae)
+    
     # 每5轮计算并输出一次MAE和MSE
     if (cc+1) % 5 == 0 or cc == 0:
         print(f"\n  Round {cc+1} - MSE: {current_mse:.6f}, MAE: {current_mae:.6f}")
@@ -217,6 +225,9 @@ plt.close()
 # 打印最终结果
 print('\n====================== Local Training Results ======================')
 print(f'Average MSE across all clients: {final_mse:.6f}')
+print(f'Average MAE across all clients: {final_mae:.6f}')
+print(f'Best MSE: {best_mse:.6f}')
+print(f'Best MAE: {best_mae:.6f}')
 print(f'Standard deviation: {final_std:.6f}')
 print(f'MSE curve saved to: {mse_plot_path}')
 print(f'MAE curve saved to: {mae_plot_path}')
@@ -230,6 +241,9 @@ print(f'Median client MSE: {np.median(final_mse_per_client):.6f}')
 with open(log_file_path, 'a') as log_file:
     log_file.write(f"===== Training Completed =====\n")
     log_file.write(f"Final average MSE: {final_mse:.6f}\n")
+    log_file.write(f"Final average MAE: {final_mae:.6f}\n")
+    log_file.write(f"Best MSE: {best_mse:.6f}\n")
+    log_file.write(f"Best MAE: {best_mae:.6f}\n")
     log_file.write(f"Standard deviation: {final_std:.6f}\n")
     log_file.write(f"Minimum client MSE: {np.min(final_mse_per_client):.6f}\n")
     log_file.write(f"Maximum client MSE: {np.max(final_mse_per_client):.6f}\n")

@@ -195,6 +195,10 @@ train_loss_history = []
 test_loss_history = []
 test_mae_history = []
 
+# 跟踪最小值
+best_mse = float('inf')
+best_mae = float('inf')
+
 # 如果从检查点恢复
 start_round = 0
 if args.resume and args.checkpoint:
@@ -274,6 +278,10 @@ for round in range(start_round, args.global_rounds):
     test_loss_history.append(test_mse)
     test_mae_history.append(test_mae)
     
+    # 更新最小值
+    best_mse = min(best_mse, test_mse)
+    best_mae = min(best_mae, test_mae)
+    
     # 计算轮次时间
     round_time = time.time() - round_time_start
     
@@ -337,12 +345,16 @@ final_test_mse = test_loss_history[-1]
 final_test_mae = test_mae_history[-1]
 print(f"FedAvg final test MSE: {final_test_mse:.6f}")
 print(f"FedAvg final test MAE: {final_test_mae:.6f}")
+print(f"FedAvg best MSE: {best_mse:.6f}")
+print(f"FedAvg best MAE: {best_mae:.6f}")
 
 # 将最终结果写入日志
 with open(log_file, 'a') as f:
     f.write("\n===== Training Completed =====\n")
     f.write(f"Final test MSE: {final_test_mse:.6f}\n")
     f.write(f"Final test MAE: {final_test_mae:.6f}\n")
+    f.write(f"Best MSE: {best_mse:.6f}\n")
+    f.write(f"Best MAE: {best_mae:.6f}\n")
     f.write(f"MSE curve saved to: {mse_plot_path}\n")
     f.write(f"MAE curve saved to: {mae_plot_path}\n")
     f.write(f"Completion Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
