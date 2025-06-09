@@ -30,3 +30,4 @@ multirun
 lib/datasets/product/data_X.csv
 lib/datasets/product/data_Y.csv
 lib/datasets/product/sample_submission.csv
+/lib/datasets/sensor

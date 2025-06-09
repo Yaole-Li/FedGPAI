@@ -14,6 +14,45 @@ from lib.FedGPAI.get_FedGPAI import get_FedGPAI
 nvmlInit()
 handle = nvmlDeviceGetHandleByIndex(0)  # 假设使用第一个GPU
 
+def get_lr_decay_factor(epoch, args):
+    """计算学习率衰减因子
+    
+    Args:
+        epoch: 当前训练轮数
+        args: 命令行参数
+        
+    Returns:
+        学习率衰减因子，范围[args.lr_min_factor, 1.0]
+    """
+    # 如果没启用衰减或者还未到开始衰减轮数，返回1.0（无衰减）
+    if not args.lr_decay or epoch < args.lr_decay_start:
+        return 1.0
+    
+    # 计算衰减当前实际已衰减轮数
+    effective_epoch = epoch - args.lr_decay_start
+    
+    if effective_epoch <= 0:
+        return 1.0
+    
+    if args.lr_decay_type == "exponential":
+        # 指数衰减: 每轮按照特定比例衰减，缓慢版本
+        decay = args.lr_decay_rate ** effective_epoch
+    
+    elif args.lr_decay_type == "step":
+        # 步进式衰减: 每固定步长后衰减
+        decay = args.lr_decay_rate ** (effective_epoch // args.lr_step_size)
+    
+    elif args.lr_decay_type == "cosine":
+        # 余弦衰减：最平滑的衰减方式
+        remaining_epochs = args.global_rounds - args.lr_decay_start
+        decay = 0.5 * (1 + np.cos(np.pi * effective_epoch / remaining_epochs))
+    
+    else:  # 默认使用指数衰减
+        decay = args.lr_decay_rate ** effective_epoch
+    
+    # 限制最小学习率
+    return max(args.lr_min_factor, decay)
+
 def print_memory_usage(prefix=""):
     """打印当前内存和显存使用情况"""
     # 获取GPU显存信息
@@ -55,10 +94,24 @@ parser.add_argument("--num_samples", default=250, type=int, help="每个客户�
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
 # 模型相关参数
+parser.add_argument("--hidden_dim", default=64, type=int, help="隐藏层维度")
+parser.add_argument("--max_lr", default=0.01, type=float, help="学习率上限，默认为0.01")
+parser.add_argument("--use_fixed_lr", default=False, type=bool, help="是否使用固定学习率而非自动计算学习率")
+parser.add_argument("--fixed_lr", default=0.005, type=float, help="如果使用固定学习率，该值将被使用")
 parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
 parser.add_argument("--global_rounds", default=20, type=int, help="全局联邦训练轮数")
 parser.add_argument("--local_rounds", default=5, type=int, help="本地训练轮数")
+
+# 学习率相关参数
+parser.add_argument("--lr_decay", default=True, type=bool, help="是否使用学习率衰减")
+parser.add_argument("--lr_decay_type", default="exponential", type=str, help="学习率衰减类型: exponential, step, cosine")
+parser.add_argument("--lr_decay_rate", default=0.98, type=float, help="指数衰减率（越接近1衰减越缓慢）")
+parser.add_argument("--lr_step_size", default=5, type=int, help="步长衰减的步长")
+parser.add_argument("--lr_min_factor", default=0.4, type=float, help="最小学习率因子（相对于初始学习率）")
+parser.add_argument("--lr_decay_start", default=10, type=int, help="开始学习率衰减的轮数（前面轮数保持初始学习率）")
+parser.add_argument("--use_best_model", default=True, type=bool, help="是否保存并使用最佳模型")
+
 
 # 检查点相关参数
 parser.add_argument("--resume", action="store_true", help="是否从检查点继续训练")
@@ -66,8 +119,19 @@ parser.add_argument("--checkpoint", type=str, default="", help="检查点文件�
 
 args = parser.parse_args()
 
-# 设置学习率
-args.eta = 1/np.sqrt(args.num_samples)
+# 设置初始学习率
+# 计算学习率
+if args.use_fixed_lr:
+    # 使用用户指定的固定学习率
+    args.eta_init = args.fixed_lr
+else:
+    # 使用自动计算的学习率，并确保不超过最大值
+    auto_lr = 1/np.sqrt(args.num_samples)
+    args.eta_init = min(auto_lr, args.max_lr)
+
+args.eta = args.eta_init  # 当前学习率初始化为初始学习率
+print(f"学习率设置为: {args.eta_init:.6f}")
+
 
 # 加载数据集
 print(f"正在加载 {args.dataset} 数据集...")
@@ -116,6 +180,8 @@ rounds_history = []
 # 跟踪最小值
 best_mse = float('inf')
 best_mae = float('inf')
+best_model_checkpoint = None
+best_model_round = 0
 
 # 将所有张量移到相应设备
 w = w.to(device)
@@ -184,7 +250,11 @@ print(f"开始联邦学习训练 ({args.global_rounds} 轮全局训练, {args.lo
 
 # 执行联邦学习训练过程 (算法3.1第1行: for t ← 0, ..., T - 1 do)
 for cc in range(start_epoch, args.global_rounds):
-    print(f"\n全局轮次 {cc+1}/{args.global_rounds}")
+    # 计算当前轮次的学习率衰减因子
+    lr_decay_factor = get_lr_decay_factor(cc, args)
+    args.eta = args.eta_init * lr_decay_factor
+    
+    print(f"\n全局轮次 {cc+1}/{args.global_rounds} (学习率: {args.eta:.6f}, 衰减因子: {lr_decay_factor:.4f})")
     
     # 打印初始内存状态
     print_memory_usage("训练前")
@@ -335,8 +405,28 @@ for cc in range(start_epoch, args.global_rounds):
     rounds_history.append(cc+1)
     
     # 更新最小值
-    best_mse = min(best_mse, current_mse)
-    best_mae = min(best_mae, current_mae)
+    if current_mse < best_mse:
+        best_mse = current_mse
+        best_mae = current_mae
+        best_model_round = cc + 1
+        
+        # 如果启用了最佳模型保存功能，则保存当前模型为最佳模型
+        if args.use_best_model:
+            best_model_checkpoint = {
+                'epoch': cc + 1,
+                'global_model': alg.state_dict() if hasattr(alg, 'state_dict') else None,
+                'w': w.clone() if isinstance(w, torch.Tensor) else w.copy(),
+                'w_loc': w_loc.clone() if isinstance(w_loc, torch.Tensor) else w_loc.copy(),
+                'a': a.clone() if isinstance(a, torch.Tensor) else a.copy(),
+                'b': b.clone() if isinstance(b, torch.Tensor) else b.copy(),
+                'mse': best_mse,
+                'mae': best_mae
+            }
+            
+            # 保存最佳模型
+            best_model_path = os.path.join(checkpoint_dir, "best_model.pt")
+            torch.save(best_model_checkpoint, best_model_path)
+            print(f"  发现新的最佳模型! MSE: {best_mse:.6f}, MAE: {best_mae:.6f}, 已保存到: {best_model_path}")
     
     # 每5轮计算并输出一次MAE和MSE
     if (cc+1) % 5 == 0 or cc == 0:
@@ -407,12 +497,28 @@ plt.close()
 # 打印最终结果
 final_mse = mse[-1].item()
 final_mae = torch.mean(torch.sqrt(mse[-1])).item()
-final_std = torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item()
-print(f'FedGPAI final MSE: {final_mse:.6f}')
-print(f'FedGPAI final MAE: {final_mae:.6f}')
-print(f'FedGPAI best MSE: {best_mse:.6f}')
-print(f'FedGPAI best MAE: {best_mae:.6f}')
-print(f'FedGPAI standard deviation: {final_std:.6f}')
+
+# 训练结束，如果启用了使用最佳模型功能，则加载最佳模型
+if args.use_best_model and best_model_checkpoint is not None:
+    print(f"\n加载最佳模型（轮次 {best_model_round}）...")
+    # 从最佳模型恢复状态
+    w = best_model_checkpoint['w']
+    w_loc = best_model_checkpoint['w_loc']
+    a = best_model_checkpoint['a']
+    b = best_model_checkpoint['b']
+    if hasattr(alg, 'load_state_dict') and best_model_checkpoint['global_model'] is not None:
+        alg.load_state_dict(best_model_checkpoint['global_model'])
+    print(f"已加载最佳模型 (MSE: {best_mse:.6f}, MAE: {best_mae:.6f})")
+
+# 打印最终结果
+final_mse = mse_history[-1]
+final_mae = mae_history[-1]
+print(f"\n训练完成! 总轮数: {args.global_rounds}")
+print(f"最终 MSE: {final_mse:.6f}")
+print(f"最终 MAE: {final_mae:.6f}")
+print(f"最佳 MSE: {best_mse:.6f} (轮次 {best_model_round})")
+print(f"最佳 MAE: {best_mae:.6f} (轮次 {best_model_round})")
+print(f'FedGPAI standard deviation: {torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item():.6f}')
 print(f'MSE curve saved to: {mse_plot_path}')
 print(f'MAE curve saved to: {mae_plot_path}')
 
@@ -423,7 +529,7 @@ with open(log_file_path, 'a') as log_file:
     log_file.write(f"Final MAE: {final_mae:.6f}\n")
     log_file.write(f"Best MSE: {best_mse:.6f}\n")
     log_file.write(f"Best MAE: {best_mae:.6f}\n")
-    log_file.write(f"Standard Deviation: {final_std:.6f}\n")
+    log_file.write(f"Standard Deviation: {torch.std(torch.mean(torch.mean(m, dim=2), dim=1)).item():.6f}\n")
     log_file.write(f"MSE curve saved to: {mse_plot_path}\n")
     log_file.write(f"MAE curve saved to: {mae_plot_path}\n")
     log_file.write(f"Completion Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")

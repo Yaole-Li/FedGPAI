@@ -22,7 +22,7 @@ parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比�
 # 模型相关参数
 parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
-parser.add_argument("--global_rounds", default=50, type=int, help="训练轮数")
+parser.add_argument("--global_rounds", default=20, type=int, help="训练轮数")
 parser.add_argument("--local_rounds", default=5, type=int, help="本地训练轮数")
 
 args = parser.parse_args()
@@ -225,12 +225,9 @@ plt.close()
 # 打印最终结果
 print('\n====================== Local Training Results ======================')
 print(f'Average MSE across all clients: {final_mse:.6f}')
-print(f'Average MAE across all clients: {final_mae:.6f}')
 print(f'Best MSE: {best_mse:.6f}')
-print(f'Best MAE: {best_mae:.6f}')
 print(f'Standard deviation: {final_std:.6f}')
 print(f'MSE curve saved to: {mse_plot_path}')
-print(f'MAE curve saved to: {mae_plot_path}')
 
 # 打印每个客户端的MSE统计信息
 print(f'\nMinimum client MSE: {np.min(final_mse_per_client):.6f}')
@@ -241,13 +238,10 @@ print(f'Median client MSE: {np.median(final_mse_per_client):.6f}')
 with open(log_file_path, 'a') as log_file:
     log_file.write(f"===== Training Completed =====\n")
     log_file.write(f"Final average MSE: {final_mse:.6f}\n")
-    log_file.write(f"Final average MAE: {final_mae:.6f}\n")
     log_file.write(f"Best MSE: {best_mse:.6f}\n")
-    log_file.write(f"Best MAE: {best_mae:.6f}\n")
     log_file.write(f"Standard deviation: {final_std:.6f}\n")
     log_file.write(f"Minimum client MSE: {np.min(final_mse_per_client):.6f}\n")
     log_file.write(f"Maximum client MSE: {np.max(final_mse_per_client):.6f}\n")
     log_file.write(f"Median client MSE: {np.median(final_mse_per_client):.6f}\n")
     log_file.write(f"MSE curve saved to: {mse_plot_path}\n")
-    log_file.write(f"MAE curve saved to: {mae_plot_path}\n")
     log_file.write(f"Completion Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")

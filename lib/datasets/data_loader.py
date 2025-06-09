@@ -4,6 +4,7 @@ from lib.datasets.wec.data_processor import data_processing_wec
 from lib.datasets.water.data_processor import data_processing_water
 from lib.datasets.product.data_processor import data_processing_product
 from lib.datasets.power.data_processor import data_processing_power
+from lib.datasets.sensor.data_processor import data_processing_sensor
 
 def data_loader(args):
     """
@@ -29,5 +30,8 @@ def data_loader(args):
     
     elif args.dataset=="Power":
         X, Y = data_processing_power(args)
+        
+    elif args.dataset=="Sensor":
+        X, Y = data_processing_sensor(args)
     
     return X, Y
