@@ -6,13 +6,9 @@ import gc
 import psutil
 import time
 import matplotlib.pyplot as plt
-from datetime import datetime
 from pynvml import *
 from lib.datasets.data_loader import data_loader
 from lib.FedGPAI.get_FedGPAI import get_FedGPAI
-from lib.FedGPAI.get_FedGPAI_advanced import get_FedGPAI_advanced
-from lib.FedGPAI.FedGPAI_regression import FedGPAI_regression
-from lib.FedGPAI.FedGPAI_advanced import FedGPAI_advanced
 
 # 初始化NVML以监控GPU显存
 nvmlInit()
@@ -98,18 +94,10 @@ parser.add_argument("--num_samples", default=250, type=int, help="每个客户�
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
 # 模型相关参数
-parser.add_argument("--hidden_dim", default=64, type=int, help="隐藏层维度")
-parser.add_argument("--max_lr", default=0.01, type=float, help="学习率上限，默认为0.01")
-parser.add_argument("--use_fixed_lr", default=False, type=bool, help="是否使用固定学习率而非自动计算学习率")
-parser.add_argument("--fixed_lr", default=0.005, type=float, help="如果使用固定学习率，该值将被使用")
 parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
-parser.add_argument("--global_rounds", default=20, type=int, help="全局联邦训练轮数")
+parser.add_argument("--global_rounds", default=50, type=int, help="全局联邦训练轮数")
 parser.add_argument("--local_rounds", default=5, type=int, help="本地训练轮数")
-
-# 回归器相关参数
-parser.add_argument("--regressor_type", default='linear', type=str, choices=['linear', 'mlp'], help="回归器类型: linear或mlp")
-parser.add_argument("--hidden_dims", default=[64, 32], type=int, nargs='+', help="MLP回归器的隐藏层维度列表")
 
 # 学习率相关参数
 parser.add_argument("--lr_decay", default=True, type=bool, help="是否使用学习率衰减")
@@ -128,18 +116,8 @@ parser.add_argument("--checkpoint", type=str, default="", help="检查点文件�
 args = parser.parse_args()
 
 # 设置初始学习率
-# 计算学习率
-if args.use_fixed_lr:
-    # 使用用户指定的固定学习率
-    args.eta_init = args.fixed_lr
-else:
-    # 使用自动计算的学习率，并确保不超过最大值
-    auto_lr = 1/np.sqrt(args.num_samples)
-    args.eta_init = min(auto_lr, args.max_lr)
-
+args.eta_init = 1/np.sqrt(args.num_samples)
 args.eta = args.eta_init  # 当前学习率初始化为初始学习率
-print(f"学习率设置为: {args.eta_init:.6f}")
-
 
 # 加载数据集
 print(f"正在加载 {args.dataset} 数据集...")
@@ -200,20 +178,9 @@ b = b.to(device)
 # 创建保存模型的目录
 # 使用方法名称_客户端数量_全局联邦训练轮数作为文件夹名称
 # 创建检查点目录（加上时间戳）
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-model_type = "FedGPAI" if args.regressor_type == 'linear' else f"FedGPAI_{args.regressor_type}"
-checkpoint_dir = f"checkpoints/{model_type}_{args.dataset}_{args.num_clients}_{args.global_rounds}_{timestamp}"
+current_time = time.strftime('%Y%m%d_%H%M%S')
+checkpoint_dir = os.path.join("checkpoints", f"FedGPAI_{args.dataset}_{args.num_clients}_{args.global_rounds}_{current_time}")
 os.makedirs(checkpoint_dir, exist_ok=True)
-
-# 保存模型配置信息
-config_file_path = os.path.join(checkpoint_dir, "config.txt")
-with open(config_file_path, 'w') as config_file:
-    config_file.write(f"回归器类型: {args.regressor_type}\n")
-    if args.regressor_type == 'mlp':
-        config_file.write(f"MLP隐藏层维度: {args.hidden_dims}\n")
-    config_file.write(f"学习率: {args.eta_init}\n")
-    config_file.write(f"正则化参数: {args.regularizer}\n")
-    config_file.write(f"随机特征数量: {args.num_random_features}\n")
 print(f"检查点将保存到: {checkpoint_dir}")
 
 # 创建日志文件
@@ -223,11 +190,8 @@ log_file_path = os.path.join(checkpoint_dir, log_file_name)
 # 记录训练起始信息到日志
 with open(log_file_path, 'w') as log_file:
     log_file.write(f"===== 训练开始 =====\n")
-    log_file.write(f"方法: {'FedGPAI' if args.regressor_type == 'linear' else f'FedGPAI-{args.regressor_type.upper()}'}\n")
+    log_file.write(f"方法: FedGPAI\n")
     log_file.write(f"数据集: {args.dataset}\n")
-    log_file.write(f"回归器类型: {args.regressor_type}\n")
-    if args.regressor_type == 'mlp':
-        log_file.write(f"MLP隐藏层: {args.hidden_dims}\n")
     log_file.write(f"客户端数量: {args.num_clients}\n")
     log_file.write(f"全局训练轮数: {args.global_rounds}\n")
     log_file.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
@@ -297,24 +261,21 @@ for cc in range(start_epoch, args.global_rounds):
     print(f"本轮训练耗时: {epoch_time:.2f}秒")
     
     # 生成随机特征
-    ran_feature = torch.randn(X[0].shape[1], args.num_random_features).to(device)
+    ran_feature = torch.zeros((N, n_components, gamma.shape[0]), dtype=torch.float32)
+    for i in range(num_rbf):
+        ran_feature[:, :, i] = torch.randn(N, n_components) * torch.sqrt(torch.tensor(1/gamma[i], dtype=torch.float32))
+        
+    # 移动到相应设备
+    ran_feature = ran_feature.to(device)
     
-    # 使用FedGPAI算法初始化客户端模型（本地模型和混合模型）
-    # 参考算法3.1和3.2，第1-5行
-
-    # 根据选择的回归器类型使用不同的模型初始化函数
-    if args.regressor_type == 'linear':
-        print(f"使用线性回归器模型创建FedGPAI模型实例...")
-        local_models, federated_model, hybrid_models = get_FedGPAI(ran_feature, args)
-    else:
-        print(f"使用MLP回归器模型创建FedGPAI模型实例，隐藏层维度: {args.hidden_dims}...")
-        local_models, federated_model, hybrid_models = get_FedGPAI_advanced(ran_feature, args)
+    # 获取FedGPAI模型 (改进版算法3.1第2行: 服务器发送全局回归器φ^t给所有参与的客户端)
+    alg_loc, alg, alg_hybrid = get_FedGPAI(ran_feature, args)
     
     # 如果是从检查点恢复训练的第一个训练轮次，加载模型状态
     if cc == start_epoch and args.resume and args.checkpoint and 'global_model_state' in locals():
-        if global_model_state is not None and hasattr(federated_model, 'load_state_dict'):
+        if global_model_state is not None and hasattr(alg, 'load_state_dict'):
             try:
-                federated_model.load_state_dict(global_model_state)
+                alg.load_state_dict(global_model_state)
                 print(f"  成功加载全局回归器状态")
             except Exception as e:
                 print(f"  加载模型状态失败: {str(e)}")
@@ -338,86 +299,86 @@ for cc in range(start_epoch, args.global_rounds):
                 print(f"    客户端{j+1}开始本地训练: 全局轮次 {cc+1}, 样本 {i}")
                 print(f"    将执行 {args.local_rounds} 轮本地训练")
             # 算法3.1第4-5行: 设置全局模型和混合模型
-            # θ^t ← (ω_i^t, φ^t) - 全局模型与本地特征提取器的混合 
-            # θ_i^t ← (ω_i^t, φ_i^{t-1}) - 本地模型（本地特征提取器和本地回归器）
+            # θ^t ← (ω^t, φ^t) - 全局模型
+            # θ_i^t ← (ω^t, φ_i^{t-1}) - 混合模型
             
-            # 创建全局模型与本地特征提取器的混合模型
-            global_hybrid_model = local_models[j].create_hybrid_model(local_models[j].feature_extractor, federated_model.regressor)
+            # 更新混合模型，用本地特征提取器和全局回归器
+            hybrid_model = alg_loc[j].create_hybrid_model(alg_loc[j].feature_extractor, alg.regressor)
+            alg_hybrid[j] = hybrid_model
             
-            # 创建完全本地模型（使用本地特征提取器和上一轮的本地回归器）
-            local_hybrid_model = hybrid_models[j]
+            # 算法3.2: 基于梯度幅度的参数重要性评估
+            # 首先对混合模型的回归器进行微调（算法3.2第4行）
             
-            # 算法3.2第4行: 使用本地特征提取器微调本地回归器
+            # 本地训练多轮
             for local_round in range(args.local_rounds):
-                local_hybrid_model.fit(X[j][i:i+1, :], Y[j][i:i+1], num_epochs=1, learning_rate=args.eta)
+                # 混合模型微调
+                f_RF_hybrid, f_RF_p_hybrid, X_features_hybrid = alg_hybrid[j].predict(X[j][i:i+1, :], None)
+                loss_hybrid = (f_RF_hybrid - Y[j][i])**2
+                # 通过梯度下降微调混合模型的回归器
+                _, hybrid_grad = alg_hybrid[j].local_update(f_RF_p_hybrid, Y[j][i], torch.ones_like(w[j:j+1, :]), X_features_hybrid)
+                # 及时释放中间变量内存
+                del f_RF_p_hybrid
+                if local_round < args.local_rounds - 1:  # 最后一轮需要保留这些变量
+                    del f_RF_hybrid, X_features_hybrid, loss_hybrid
             
-            # 算法3.2第6-12行: 计算两个模型的梯度幅度
-            # evaluate_gradient_magnitude实现了算法3.2中的梯度计算
-            g_g, g_i = local_models[j].evaluate_gradient_magnitude(
-                global_hybrid_model,  # 全局回归器和本地特征提取器的混合模型
-                local_hybrid_model,   # 本地回归器和本地特征提取器的混合模型
-                X[j][i:i+1, :],      # 本地数据
-                Y[j][i:i+1]          # 本地标签
-            )
+            # 算法3.2第6-12行: 计算全局模型和混合模型梯度幅度
+            g_g, g_i = alg.evaluate_gradient_magnitude(alg, alg_hybrid[j], X[j][i:i+1, :], Y[j][i])
             
-            # 算法3.3: 通过model_interpolation实现逐参数自适应插值
-            personalized_regressor = local_models[j].model_interpolation(
-                g_g,                              # 全局模型梯度幅度
-                g_i,                              # 本地模型梯度幅度
-                global_hybrid_model.regressor,   # 全局回归器
-                local_hybrid_model.regressor     # 本地回归器
-            )
+            # 算法3.3: 基于逐参数自适应插值的个性化回归器优化
+            personalized_regressor = alg.model_interpolation(g_g, g_i, alg.regressor, alg_hybrid[j].regressor)
+            # 释放不再需要的变量
+            del g_g, g_i, hybrid_grad
             
-            # 算法3.1第10行: 客户端获得初始个性化模型
-            local_models[j].regressor = personalized_regressor
+            # 算法3.1第10行: 客户端 i 获得初始模型θ̂_i^t = (ω^t, φ̂_i^t)
+            alg_loc[j].regressor = personalized_regressor
             
-            # 算法3.1第11行: 本地训练(包括特征提取器和回归器)
-            # 使用本地数据的当前样本微调模型
-            local_models[j].fit(X[j][i:i+1, :], Y[j][i:i+1], num_epochs=1, learning_rate=args.eta)
+            # 算法3.1第11行: θ̂_i^t ← θ̂_i^t - α∇_{θ_i}L(θ̂_i^t; D_i) - 本地训练
+            # 将NumPy数组转换为PyTorch张量并移动到指定设备
+            x_j = torch.tensor(X[j][i:i+1, :], dtype=torch.float32).to(device)
+            y_j = torch.tensor(Y[j][i], dtype=torch.float32).to(device)
             
-            # 算法3.3第3-4行: 计算预测误差
-            y_pred = hybrid_models[j].predict(X[j][i:i+1, :])
-            sq_error = (Y[j][i:i+1] - y_pred) ** 2
-            e[i, j] = torch.mean(sq_error)
+            # 使用全局模型预测和更新
+            f_RF_fed, f_RF_p, X_features = alg.predict(x_j, w[j:j+1, :])
+            w[j:j+1, :], local_grad = alg.local_update(f_RF_p, y_j, w[j:j+1, :], X_features)
             
-            # 收集梯度用于后续服务器聚合
-            if args.regressor_type == 'linear':
-                agg_grad.append(hybrid_models[j].regressor.weight)
-            else:  # MLP
-                agg_grad.append({name: param.data.clone() for name, param in hybrid_models[j].regressor.named_parameters()})
+            # 使用本地模型预测和更新 (这里是个性化模型的训练)
+            f_RF_loc, f_RF_p, X_features = alg_loc[j].predict(x_j, w_loc[j:j+1, :])
+            w_loc[j:j+1, :], local_grad_loc = alg_loc[j].local_update(f_RF_p, y_j, w_loc[j:j+1, :], X_features)
             
-            # 这里389-392行的代码似乎与378-380行重复，因为已经计算过误差e[i,j]
-            # 如果需要计算累积误差，使用前面计算的y_pred和Y[j][i:i+1]
-            # if i == 0:
-            #     e[i, j] = torch.mean((y_pred - Y[j][i:i+1])**2)
-            # else:
-            #     e[i, j] = (1/(i+1)) * ((i*e[i-1, j]) + torch.mean((y_pred - Y[j][i:i+1])**2))
+            # 组合预测
+            f_RF = (a[j, 0]*f_RF_fed + b[j, 0]*f_RF_loc)/(a[j, 0]+b[j, 0])
+            
+            # 计算损失并更新权重
+            l_fed = (f_RF_fed-Y[j][i])**2
+            l_loc = (f_RF_loc-Y[j][i])**2
+            
+            # 更安全的广播处理 - 使用标量转换避免张量累积
+            exp_term_fed = torch.exp(-args.eta * l_fed)
+            exp_term_loc = torch.exp(-args.eta * l_loc)
+            
+            # 直接使用浮点数更新，避免张量累积导致的内存泄漏
+            a[j, 0] = a[j, 0] * float(exp_term_fed)
+            b[j, 0] = b[j, 0] * float(exp_term_loc)
+            
+            # 本地模型更新
+            alg_loc[j].global_update([local_grad_loc])
+            
+            # 改进版算法3.1第8行: 客户端 i 只发送回归器参数φ̂_i^t至中央服务器
+            # 收集回归器梯度用于全局模型更新
+            agg_grad.append(local_grad)
+            
+            # 记录当前轮次的均方误差
+            m[j, i, cc] = (f_RF-y_j)**2
+            
+            # 计算累积误差
+            if i == 0:
+                e[i, j] = (f_RF-y_j)**2
+            else:
+                e[i, j] = (1/(i+1)) * ((i*e[i-1, j])+((f_RF-y_j)**2))
         
         # 改进版算法3.1第9行: 服务器聚合客户端回归器φ^{t+1} ← \frac{1}{N}\sum_{i=1}^N φ̂_i^t
-        # 算法3.1第8行: 服务器聚合所有客户端的本地回归器参数
-        if args.regressor_type == 'linear':
-            new_regressor = torch.mean(torch.stack(agg_grad), dim=0)
-            federated_model.regressor = new_regressor
-        else:  # MLP回归器 - 参数字典的平均
-            # 获取所有参数名称
-            param_names = set()
-            for grad_dict in agg_grad:
-                param_names.update(grad_dict.keys())
-                
-            # 对每个参数计算平均值
-            avg_params = {}
-            for name in param_names:
-                param_stack = []
-                for grad_dict in agg_grad:
-                    if name in grad_dict:
-                        param_stack.append(grad_dict[name])
-                if param_stack:
-                    avg_params[name] = torch.mean(torch.stack(param_stack), dim=0)
-            
-            # 更新全局模型参数
-            for name, param in federated_model.regressor.named_parameters():
-                if name in avg_params:
-                    param.data.copy_(avg_params[name])
+        # 只聚合回归器参数
+        alg.global_update(agg_grad)
     
     # 计算平均误差
     mse = (1/(cc+1)) * ((cc*mse)+torch.reshape(torch.mean(e, dim=1), (-1, 1)))
@@ -439,9 +400,7 @@ for cc in range(start_epoch, args.global_rounds):
         if args.use_best_model:
             best_model_checkpoint = {
                 'epoch': cc + 1,
-                'global_model': federated_model.state_dict() if hasattr(federated_model, 'state_dict') else None,
-                'regressor_type': args.regressor_type,
-                'hidden_dims': args.hidden_dims if args.regressor_type == 'mlp' else None,
+                'global_model': alg.state_dict() if hasattr(alg, 'state_dict') else None,
                 'w': w.clone() if isinstance(w, torch.Tensor) else w.copy(),
                 'w_loc': w_loc.clone() if isinstance(w_loc, torch.Tensor) else w_loc.copy(),
                 'a': a.clone() if isinstance(a, torch.Tensor) else a.copy(),
@@ -471,7 +430,7 @@ for cc in range(start_epoch, args.global_rounds):
         checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
         checkpoint = {
             'epoch': cc + 1,
-            'global_model': federated_model.state_dict() if hasattr(federated_model, 'state_dict') else None,
+            'global_model': alg.state_dict() if hasattr(alg, 'state_dict') else None,
             'w': w,
             'w_loc': w_loc,
             'a': a,
@@ -533,8 +492,8 @@ if args.use_best_model and best_model_checkpoint is not None:
     w_loc = best_model_checkpoint['w_loc']
     a = best_model_checkpoint['a']
     b = best_model_checkpoint['b']
-    if hasattr(federated_model, 'load_state_dict') and best_model_checkpoint['global_model'] is not None:
-        federated_model.load_state_dict(best_model_checkpoint['global_model'])
+    if hasattr(alg, 'load_state_dict') and best_model_checkpoint['global_model'] is not None:
+        alg.load_state_dict(best_model_checkpoint['global_model'])
     print(f"已加载最佳模型 (MSE: {best_mse:.6f}, MAE: {best_mae:.6f})")
 
 # 打印最终结果
