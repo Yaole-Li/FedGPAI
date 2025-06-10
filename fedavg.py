@@ -10,6 +10,7 @@ import copy
 from pynvml import *
 import psutil
 from lib.datasets.data_loader import data_loader
+from lib.FedGPAI.models import MLPFeatureExtractor, MLPRegressor
 
 # 初始化NVML以监控GPU显存
 nvmlInit()
@@ -30,20 +31,36 @@ def print_memory_usage(prefix=""):
     
     print(f"{prefix} | GPU: {gpu_used:.1f}/{gpu_total:.1f} MB (Free: {gpu_free:.1f} MB) | RAM: {ram_used:.1f} MB")
 
-class RegressionModel(nn.Module):
-    """简单的前馈神经网络，用于回归任务"""
-    def __init__(self, input_dim, hidden_dim=64):
-        super(RegressionModel, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim//2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim//2, 1)
-        )
+def parse_hidden_dims(dims_str):
+    """
+    解析字符串形式的隐藏层维度配置
+    
+    Args:
+        dims_str: 以逗号分隔的隐藏层维度字符串，例如 "256,128,64"
+        
+    Returns:
+        list: 隐藏层维度列表，例如 [256, 128, 64]
+    """
+    if not dims_str:
+        return []
+    return [int(dim) for dim in dims_str.split(',')]
+
+
+class FedAvgModel(nn.Module):
+    """用于 FedAvg 的 MLP 模型，包含特征提取器和回归器"""
+    def __init__(self, input_dim, extractor_hidden_dims=None, regressor_hidden_dims=None, output_dim=32):
+        super(FedAvgModel, self).__init__()
+        if extractor_hidden_dims is None:
+            extractor_hidden_dims = [256, 128, 64]
+        if regressor_hidden_dims is None:
+            regressor_hidden_dims = [32, 16]
+        
+        self.feature_extractor = MLPFeatureExtractor(input_dim, output_dim, hidden_dims=extractor_hidden_dims)
+        self.regressor = MLPRegressor(output_dim, hidden_dims=regressor_hidden_dims)
     
     def forward(self, x):
-        return self.network(x)
+        features = self.feature_extractor(x)
+        return self.regressor(features)
 
 def train(model, data_X, data_Y, optimizer, epochs=1):
     """训练模型一定轮次
@@ -129,8 +146,12 @@ parser.add_argument("--client_ratio", default=1, type=float, help="每轮选择�
 parser.add_argument("--num_samples", default=250, type=int, help="每个客户端的样本数量")
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
-# 模型相关参数
-parser.add_argument("--hidden_dim", default=64, type=int, help="隐藏层维度")
+# 模型参数
+parser.add_argument("--feature_dim", type=int, default=32, help="特征提取器输出维度")
+parser.add_argument("--extractor_hidden_dims", type=str, default="256,128,64", help="特征提取器隐藏层维度，以逗号分隔")
+parser.add_argument("--regressor_hidden_dims", type=str, default="32,16", help="回归器隐藏层维度，以逗号分隔")
+
+# 训练参数
 parser.add_argument("--lr", default=0.01, type=float, help="学习率")
 parser.add_argument("--weight_decay", default=1e-5, type=float, help="权重衰减")
 parser.add_argument("--global_rounds", default=20, type=int, help="全局联邦训练轮数")
@@ -155,17 +176,35 @@ print(f"数据维度: {input_dim}, 客户端数量: {K}")
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"使用设备: {device}")
 
+# 将隐藏层维度字符串转换为列表
+extractor_hidden_dims = parse_hidden_dims(args.extractor_hidden_dims)
+regressor_hidden_dims = parse_hidden_dims(args.regressor_hidden_dims)
+print(f"特征提取器隐藏层: {extractor_hidden_dims}")
+print(f"回归器隐藏层: {regressor_hidden_dims}")
+
 # 初始化全局模型
-global_model = RegressionModel(input_dim=input_dim, hidden_dim=args.hidden_dim).to(device)
+global_model = FedAvgModel(
+    input_dim=input_dim, 
+    extractor_hidden_dims=extractor_hidden_dims,
+    regressor_hidden_dims=regressor_hidden_dims,
+    output_dim=args.feature_dim
+).to(device)
 global_weights = global_model.state_dict()
 
 # 为每个客户端准备模型和数据
 clients = {}
 for k in range(K):
+    # 创建客户端模型
+    client_model = FedAvgModel(
+        input_dim=input_dim, 
+        extractor_hidden_dims=extractor_hidden_dims,
+        regressor_hidden_dims=regressor_hidden_dims,
+        output_dim=args.feature_dim
+    ).to(device)
+    
     clients[k] = {
-        'model': RegressionModel(input_dim=input_dim, hidden_dim=args.hidden_dim).to(device),
-        'optimizer': SGD(RegressionModel(input_dim=input_dim, hidden_dim=args.hidden_dim).to(device).parameters(), 
-                        lr=args.lr, weight_decay=args.weight_decay),
+        'model': client_model,
+        'optimizer': SGD(client_model.parameters(), lr=args.lr, weight_decay=args.weight_decay),
         'X_train': torch.tensor(X[k][:int((1-args.test_ratio)*X[k].shape[0])], dtype=torch.float32).to(device),
         'Y_train': torch.tensor(Y[k][:int((1-args.test_ratio)*Y[k].shape[0])], dtype=torch.float32).to(device),
         'X_test': torch.tensor(X[k][int((1-args.test_ratio)*X[k].shape[0]):], dtype=torch.float32).to(device),
@@ -185,7 +224,6 @@ with open(log_file, 'w') as f:
     f.write(f"FedAvg on {args.dataset} Dataset\n")
     f.write(f"Clients: {args.num_clients}, Global Rounds: {args.global_rounds}, Local Epochs: {args.local_epochs}\n")
     f.write(f"Learning Rate: {args.lr}, Weight Decay: {args.weight_decay}\n")
-    f.write(f"Hidden Dimension: {args.hidden_dim}\n\n")
 
 print(f"检查点将保存到: {checkpoint_dir}")
 print(f"日志将保存到: {log_file}")

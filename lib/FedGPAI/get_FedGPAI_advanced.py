@@ -3,13 +3,15 @@ from lib.FedGPAI.FedGPAI_advanced import FedGPAI_advanced
 
 def get_FedGPAI_advanced(model, args):
     """
-    获取增强版FedGPAI模型实例（本地模型和全局模型），支持线性或MLP回归器
+    获取增强版FedGPAI模型实例（本地模型和全局模型），支持MLP特征提取器和MLP回归器
     
     Args:
-        model: 随机特征模型
+        model: 数据特征维度信息
         args: 参数对象，需包含:
             - regressor_type: 回归器类型 ('linear'或'mlp')
-            - hidden_dims: MLP隐藏层维度，如[64, 32]
+            - hidden_dims: MLP回归器的隐藏层维度，如[64, 32]
+            - extractor_hidden_dims: MLP特征提取器的隐藏层维度，如[128, 64]
+            - output_dim: 特征提取器输出维度
         
     Returns:
         local: 本地模型列表
@@ -17,8 +19,12 @@ def get_FedGPAI_advanced(model, args):
         hybrid: 混合模型列表(本地特征提取器+全局回归器)
     """
     # 获取回归器相关参数
-    regressor_type = getattr(args, 'regressor_type', 'linear')
+    regressor_type = getattr(args, 'regressor_type', 'mlp')
     hidden_dims = getattr(args, 'hidden_dims', [64, 32])
+    
+    # 获取特征提取器相关参数 (默认与回归器使用相同的隐藏层维度结构)
+    extractor_hidden_dims = getattr(args, 'extractor_hidden_dims', hidden_dims)
+    output_dim = getattr(args, 'output_dim', 100)  # 默认输出维度为100
     
     if args.task == "regression":
         # 创建全局联邦模型
@@ -27,7 +33,9 @@ def get_FedGPAI_advanced(model, args):
             model, 
             args.eta, 
             regressor_type=regressor_type,
-            hidden_dims=hidden_dims,
+            regressor_hidden_dims=hidden_dims,
+            extractor_hidden_dims=extractor_hidden_dims,
+            output_dim=output_dim,
             num_clients=args.num_clients, 
             is_global=True
         )
@@ -43,7 +51,9 @@ def get_FedGPAI_advanced(model, args):
                 model, 
                 args.eta, 
                 regressor_type=regressor_type,
-                hidden_dims=hidden_dims,
+                regressor_hidden_dims=hidden_dims,
+                extractor_hidden_dims=extractor_hidden_dims,
+                output_dim=output_dim,
                 num_clients=args.num_clients, 
                 is_global=False
             )

@@ -2,9 +2,61 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from copy import deepcopy
 
 # 检查是否有可用的GPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+class MLPFeatureExtractor(nn.Module):
+    """
+    多层感知机(MLP)特征提取器，用于替代原始随机傅里叶特征提取器
+    支持最多7层的MLP
+    """
+    def __init__(self, input_dim, output_dim, hidden_dims=[64, 32], activation=nn.ReLU()):
+        super(MLPFeatureExtractor, self).__init__()
+        
+        # 确保最多只有6层隐藏层(加7层就是输出层)
+        if len(hidden_dims) > 6:
+            print(f"Warning: 特征提取器指定了{len(hidden_dims)}层，超过最大6层隐藏层限制。将只使用前6层。")
+            hidden_dims = hidden_dims[:6]
+        
+        # 构建多层神经网络
+        layers = []
+        prev_dim = input_dim
+        
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(activation)
+            prev_dim = hidden_dim
+        
+        # 输出层
+        layers.append(nn.Linear(prev_dim, output_dim))
+        
+        # 将所有层组合成序列模型
+        self.model = nn.Sequential(*layers)
+        self.to(device)
+    
+    def forward(self, x):
+        # x的形状为 [batch_size, input_dim]
+        return self.model(x)
+    
+    def clone(self):
+        # 创建新实例并深复制参数
+        new_extractor = deepcopy(self)
+        return new_extractor
+    
+    def get_parameters(self):
+        """返回模型参数字典，用于联邦学习中的参数聚合"""
+        return {name: param for name, param in self.named_parameters()}
+    
+    def set_parameters(self, new_params):
+        """设置模型参数，用于联邦学习中的参数更新"""
+        with torch.no_grad():
+            if isinstance(new_params, dict):
+                # 如果是参数字典
+                for name, param in self.named_parameters():
+                    if name in new_params:
+                        param.copy_(new_params[name])
 
 class LinearRegressor(nn.Module):
     """
@@ -45,9 +97,15 @@ class LinearRegressor(nn.Module):
 class MLPRegressor(nn.Module):
     """
     多层感知机(MLP)回归器，用于替代原始线性回归器
+    支持最多7层的MLP
     """
     def __init__(self, input_dim, hidden_dims=[64, 32], output_dim=1, activation=nn.ReLU()):
         super(MLPRegressor, self).__init__()
+        
+        # 确保最多只有6层隐藏层(加7层就是输出层)
+        if len(hidden_dims) > 6:
+            print(f"Warning: 回归器指定了{len(hidden_dims)}层，超过最大6层隐藏层限制。将只使用前6层。")
+            hidden_dims = hidden_dims[:6]
         
         # 构建多层神经网络
         layers = []

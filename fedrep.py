@@ -1,12 +1,13 @@
 import numpy as np
 import argparse
 import torch
+import time
 import os
 import gc
-import time
 import matplotlib.pyplot as plt
+from lib.FedGPAI.models import MLPFeatureExtractor, MLPRegressor
 from lib.datasets.data_loader import data_loader
-from lib.FedGPAI.FedGPAI_regression import FedGPAI_regression
+from lib.FedGPAI.FedGPAI_advanced import FedGPAI_advanced
 
 # 命令行参数设置
 parser = argparse.ArgumentParser()
@@ -21,11 +22,13 @@ parser.add_argument("--num_samples", default=250, type=int, help="每个客户�
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
 # 模型相关参数
-parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
 parser.add_argument("--global_rounds", default=20, type=int, help="全局联邦训练轮数")
 parser.add_argument("--local_rounds", default=5, type=int, help="本地训练轮数")
 parser.add_argument("--train_head_epochs", default=5, type=int, help="训练回归器的轮数")
+parser.add_argument("--extractor_hidden_dims", default="256,128,64", type=str, help="特征提取器MLP隐藏层维度，以逗号分隔的字符串")
+parser.add_argument("--regressor_hidden_dims", default="32,16", type=str, help="回归器MLP隐藏层维度，以逗号分隔的字符串")
+parser.add_argument("--output_dim", default=32, type=int, help="特征提取器输出维度")
 
 # 检查点相关参数
 parser.add_argument("--resume", action="store_true", help="是否从检查点继续训练")
@@ -49,7 +52,7 @@ M, N = X[0].shape
 K = args.num_clients
 M *= K
 
-# 设置随机核参数
+# 初始化模型配置
 
 # 创建保存模型的目录
 # 使用方法名称_数据集_客户端数量_全局联邦训练轮数_时间戳作为文件夹名称
@@ -72,15 +75,6 @@ with open(log_file_path, 'w') as log_file:
     log_file.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
 print(f"日志将保存到: {log_file_path}")
-print("初始化随机特征...")
-gamma = []
-num_rbf = 3
-for i in range(num_rbf):
-    gamma.append(10**(i-1))
-gamma = np.array(gamma)
-
-# 设置随机特征数量
-n_components = args.num_random_features
 
 # 创建保存模型的目录
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -97,32 +91,79 @@ mse_history = []
 mae_history = []
 rounds_history = []
 
+
+def parse_hidden_dims(dims_str):
+    """
+    解析字符串形式的隐藏层维度配置
+    
+    Args:
+        dims_str: 以逗号分隔的隐藏层维度字符串，例如 "256,128,64"
+        
+    Returns:
+        list: 隐藏层维度列表，例如 [256, 128, 64]
+    """
+    if not dims_str:
+        return []
+    return [int(dim) for dim in dims_str.split(',')]
+
 # 跟踪最小值
 best_mse = float('inf')
 best_mae = float('inf')
 
 
-def get_fedrep_models(random_features, args):
+def get_fedrep_models(input_dim, args):
     """
     获取FedRep模型实例
     
     Args:
-        random_features: 随机特征
+        input_dim: 输入维度
         args: 参数对象
         
     Returns:
         local_models: 本地模型列表
         global_model: 全局模型
     """
+    # 解析隐藏层维度
+    extractor_hidden_dims = parse_hidden_dims(args.extractor_hidden_dims)
+    regressor_hidden_dims = parse_hidden_dims(args.regressor_hidden_dims)
+    
+    print(f"\n创建MLP模型 - 输入维度: {input_dim}")
+    print(f"  特征提取器: 隐藏层{extractor_hidden_dims}, 输出维度{args.output_dim}")
+    print(f"  回归器: 隐藏层{regressor_hidden_dims}, 输出维度 1")
+    
     # 创建全局模型（只包含回归器部分）
-    global_model = FedGPAI_regression(args.regularizer, random_features, args.eta, args.num_clients, is_global=True)
+    global_model = FedGPAI_advanced(
+        lam=args.regularizer, 
+        rf_feature=input_dim,  # 这里直接使用输入维度
+        eta=args.eta, 
+        regressor_type='mlp', 
+        extractor_hidden_dims=extractor_hidden_dims,
+        regressor_hidden_dims=regressor_hidden_dims,
+        output_dim=args.output_dim,
+        num_clients=args.num_clients, 
+        is_global=True
+    )
     
     # 创建每个客户端的本地模型
     local_models = []
     
     for i in range(args.num_clients):
-        # 创建本地模型，包含本地特征提取器和本地回归器
-        local_model = FedGPAI_regression(args.regularizer, random_features, args.eta, args.num_clients, is_global=False)
+        # 创建本地模型
+        local_model = FedGPAI_advanced(
+            lam=args.regularizer, 
+            rf_feature=input_dim,  # 这里直接使用输入维度
+            eta=args.eta, 
+            regressor_type='mlp', 
+            extractor_hidden_dims=extractor_hidden_dims,
+            regressor_hidden_dims=regressor_hidden_dims,
+            output_dim=args.output_dim,
+            num_clients=args.num_clients, 
+            is_global=False
+        )
+        
+        # FedGPAI_advanced 已经在初始化时创建了特征提取器和回归器
+        # 不需要再手动设置
+        
         local_models.append(local_model)
     
     return local_models, global_model
@@ -152,16 +193,12 @@ print(f"开始FedRep联邦学习训练 ({args.global_rounds} 轮全局训练, {a
 for cc in range(start_epoch, args.global_rounds):
     print(f"\n全局轮次 {cc+1}/{args.global_rounds}")
     
-    # 生成随机特征
-    ran_feature = torch.zeros((N, n_components, gamma.shape[0]), dtype=torch.float32)
-    for i in range(num_rbf):
-        ran_feature[:, :, i] = torch.randn(N, n_components) * torch.sqrt(torch.tensor(1/gamma[i], dtype=torch.float32))
+    if cc == 0:
+        # 获取输入维度
+        input_dim = X[0].shape[1]
         
-    # 移动到相应设备
-    ran_feature = ran_feature.to(device)
-    
-    # 获取FedRep模型
-    local_models, global_model = get_fedrep_models(ran_feature, args)
+        # 获取FedRep模型
+        local_models, global_model = get_fedrep_models(input_dim, args)
     
     # 如果是从检查点恢复训练的第一个训练轮次，加载模型状态
     if cc == start_epoch and args.resume and args.checkpoint and 'global_model_state' in locals():
@@ -193,7 +230,10 @@ for cc in range(start_epoch, args.global_rounds):
             
             # 将全局回归器复制到本地模型，保持特征提取器不变
             local_model = local_models[j]
-            local_model.regressor = global_model.regressor.clone()
+            
+            # 深复制全局模型的回归器到本地模型
+            for target_param, source_param in zip(local_model.regressor.parameters(), global_model.regressor.parameters()):
+                target_param.data.copy_(source_param.data)
             
             # 将数据转换为PyTorch张量
             x_j = torch.tensor(X[j][i:i+1, :], dtype=torch.float32).to(device)
@@ -201,32 +241,39 @@ for cc in range(start_epoch, args.global_rounds):
             
             # FedRep本地训练（分两个阶段）
             for local_round in range(args.local_rounds):
-                # 模型预测
-                outputs, _, X_features = local_model.predict(x_j, None)
+                # 取消所有梯度 
+                if hasattr(local_model.feature_extractor, 'zero_grad'):
+                    local_model.feature_extractor.zero_grad()
+                if hasattr(local_model.regressor, 'zero_grad'):
+                    local_model.regressor.zero_grad()
+                
+                # 前向传播
+                x_features = local_model.feature_extractor(x_j)  
+                outputs = local_model.regressor(x_features)  
                 
                 # 计算损失
-                loss = (outputs - y_j)**2
+                loss = torch.mean((outputs - y_j)**2)
                 
-                # 手动计算梯度
-                if local_round < args.train_head_epochs:
-                    # 阶段1：只训练回归器，冻结特征提取器
-                    X_features_t = X_features.t()
-                    regressor_grad = (2.0 / x_j.shape[0]) * torch.matmul(X_features_t, (outputs - y_j))
-                    
-                    # 更新回归器（使用非原地操作）
-                    with torch.no_grad():
-                        local_model.regressor -= args.eta * regressor_grad
-                else:
-                    # 阶段2：只训练特征提取器，冻结回归器
-                    input_features_grad = (2.0 / x_j.shape[0]) * torch.matmul((outputs - y_j), local_model.regressor.t())
-                    feature_extractor_grad = torch.matmul(x_j.t(), input_features_grad)
-                    
-                    # 更新特征提取器（使用非原地操作）
-                    with torch.no_grad():
-                        local_model.feature_extractor -= args.eta * feature_extractor_grad
+                # 反向传播
+                loss.backward()
+                
+                # 手动更新参数(模拟优化器)
+                with torch.no_grad():
+                    if local_round < args.train_head_epochs:
+                        # 阶段1：只更新回归器参数
+                        for param in local_model.regressor.parameters():
+                            if param.grad is not None:
+                                param.data.sub_(args.eta * param.grad.data)
+                    else:
+                        # 阶段2：只更新特征提取器参数
+                        for param in local_model.feature_extractor.parameters():
+                            if param.grad is not None:
+                                param.data.sub_(args.eta * param.grad.data)
             
             # 训练结束后，使用本地模型进行预测
-            outputs, _, _ = local_model.predict(x_j, None)
+            with torch.no_grad():
+                x_features = local_model.feature_extractor(x_j)
+                outputs = local_model.regressor(x_features)
             
             # 记录当前轮次的均方误差
             current_mse = (outputs - y_j)**2
@@ -239,18 +286,34 @@ for cc in range(start_epoch, args.global_rounds):
                 e[i, j] = (1/(i+1)) * ((i*e[i-1, j]) + current_mse)
             
             # 收集回归器参数用于全局聚合
-            all_regressors.append(local_model.regressor.clone())
+            from copy import deepcopy
+            all_regressors.append(deepcopy(local_model.regressor))
         
         # 全局模型聚合（只聚合回归器）
         if all_regressors:
-            # 计算所有回归器的平均值
-            avg_regressor = torch.zeros_like(global_model.regressor)
-            for regressor in all_regressors:
-                avg_regressor += regressor
-            avg_regressor /= len(all_regressors)
+            # MLP模型参数聚合
+            # 初始化参数字典来存储聚合后的参数
+            global_state_dict = {}
             
-            # 更新全局回归器
-            global_model.regressor = avg_regressor.clone()
+            # 遍历全局模型的每个参数
+            for name, param in global_model.regressor.named_parameters():
+                # 初始化等价参数的零张量
+                global_state_dict[name] = torch.zeros_like(param.data)
+                
+                # 加和各客户端模型的参数
+                for model in all_regressors:
+                    for client_name, client_param in model.named_parameters():
+                        if client_name == name:
+                            global_state_dict[name] += client_param.data
+                            
+                # 取平均值
+                global_state_dict[name] /= len(all_regressors)
+            
+            # 更新全局模型参数
+            for name, param in global_model.regressor.named_parameters():
+                param.data.copy_(global_state_dict[name])
+                
+            # print(f"  已聚合 {len(all_regressors)} 个客户端的MLP回归器参数")
     
     # 计算平均误差
     mse = (1/(cc+1)) * ((cc*mse)+torch.reshape(torch.mean(e, dim=1), (-1, 1)))

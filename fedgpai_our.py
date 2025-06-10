@@ -94,12 +94,12 @@ parser.add_argument("--task", default='regression', type=str, help="任务类型
 
 # 客户端相关参数
 parser.add_argument("--num_clients", default=400, type=int, help="客户端数量")
-parser.add_argument("--num_samples", default=250, type=int, help="每个客户端的样本数量")
+parser.add_argument("--num_samples", default=300, type=int, help="每个客户端的样本数量")
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
 # 模型相关参数
 parser.add_argument("--hidden_dim", default=64, type=int, help="隐藏层维度")
-parser.add_argument("--max_lr", default=0.01, type=float, help="学习率上限，默认为0.01")
+parser.add_argument("--max_lr", default=0.1, type=float, help="学习率上限，默认为0.01")
 parser.add_argument("--use_fixed_lr", default=False, type=bool, help="是否使用固定学习率而非自动计算学习率")
 parser.add_argument("--fixed_lr", default=0.005, type=float, help="如果使用固定学习率，该值将被使用")
 parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
@@ -108,8 +108,12 @@ parser.add_argument("--global_rounds", default=20, type=int, help="全局联邦�
 parser.add_argument("--local_rounds", default=5, type=int, help="本地训练轮数")
 
 # 回归器相关参数
-parser.add_argument("--regressor_type", default='linear', type=str, choices=['linear', 'mlp'], help="回归器类型: linear或mlp")
-parser.add_argument("--hidden_dims", default=[64, 32], type=int, nargs='+', help="MLP回归器的隐藏层维度列表")
+parser.add_argument("--regressor_type", default='mlp', type=str, choices=['linear', 'mlp'], help="回归器类型: linear或mlp")
+parser.add_argument("--hidden_dims", default=[32, 16], type=int, nargs='+', help="MLP回归器的隐藏层维度列表")
+
+# 特征提取器相关参数
+parser.add_argument("--extractor_hidden_dims", default=[256, 128, 64], type=int, nargs='+', help="MLP特征提取器的隐藏层维度列表")
+parser.add_argument("--output_dim", default=32, type=int, help="特征提取器输出维度，应与回归器输入匹配")
 
 # 学习率相关参数
 parser.add_argument("--lr_decay", default=True, type=bool, help="是否使用学习率衰减")
@@ -296,19 +300,22 @@ for cc in range(start_epoch, args.global_rounds):
     epoch_time = time.time() - start_time
     print(f"本轮训练耗时: {epoch_time:.2f}秒")
     
-    # 生成随机特征
-    ran_feature = torch.randn(X[0].shape[1], args.num_random_features).to(device)
+    # 使用原始特征维度作为MLP特征提取器的输入维度
+    input_dim = X[0].shape[1]
     
     # 使用FedGPAI算法初始化客户端模型（本地模型和混合模型）
     # 参考算法3.1和3.2，第1-5行
 
-    # 根据选择的回归器类型使用不同的模型初始化函数
+    # 我们默认使用MLP特征提取器和MLP回归器(除非特别指定使用线性回归器)
     if args.regressor_type == 'linear':
-        print(f"使用线性回归器模型创建FedGPAI模型实例...")
+        print(f"使用线性回归器创建FedGPAI模型...")
+        # 创建随机特征矩阵作为向后兼容
+        ran_feature = torch.randn(X[0].shape[1], args.num_random_features).to(device)
         local_models, federated_model, hybrid_models = get_FedGPAI(ran_feature, args)
     else:
-        print(f"使用MLP回归器模型创建FedGPAI模型实例，隐藏层维度: {args.hidden_dims}...")
-        local_models, federated_model, hybrid_models = get_FedGPAI_advanced(ran_feature, args)
+        print(f"使用MLP特征提取器(隐藏层: {args.extractor_hidden_dims}, 输出维度: {args.output_dim}) ")
+        print(f"和MLP回归器(隐藏层: {args.hidden_dims}) 创建FedGPAI模型...")
+        local_models, federated_model, hybrid_models = get_FedGPAI_advanced(input_dim, args)
     
     # 如果是从检查点恢复训练的第一个训练轮次，加载模型状态
     if cc == start_epoch and args.resume and args.checkpoint and 'global_model_state' in locals():
@@ -348,8 +355,22 @@ for cc in range(start_epoch, args.global_rounds):
             local_hybrid_model = hybrid_models[j]
             
             # 算法3.2第4行: 使用本地特征提取器微调本地回归器
+            # 仅允许回归器参数更新，冻结特征提取器
             for local_round in range(args.local_rounds):
+                # 冻结特征提取器参数
+                for param in local_hybrid_model.feature_extractor.parameters():
+                    param.requires_grad = False
+                
+                # 仅对回归器参数进行微调
+                for param in local_hybrid_model.regressor.parameters():
+                    param.requires_grad = True
+                    
+                # 仅训练回归器参数
                 local_hybrid_model.fit(X[j][i:i+1, :], Y[j][i:i+1], num_epochs=1, learning_rate=args.eta)
+                
+                # 恢复特征提取器的参数更新状态
+                for param in local_hybrid_model.feature_extractor.parameters():
+                    param.requires_grad = True
             
             # 算法3.2第6-12行: 计算两个模型的梯度幅度
             # evaluate_gradient_magnitude实现了算法3.2中的梯度计算
@@ -362,10 +383,10 @@ for cc in range(start_epoch, args.global_rounds):
             
             # 算法3.3: 通过model_interpolation实现逐参数自适应插值
             personalized_regressor = local_models[j].model_interpolation(
-                g_g,                              # 全局模型梯度幅度
-                g_i,                              # 本地模型梯度幅度
-                global_hybrid_model.regressor,   # 全局回归器
-                local_hybrid_model.regressor     # 本地回归器
+                global_hybrid_model.regressor,   # 参数1：全局回归器
+                local_hybrid_model.regressor,    # 参数2：本地回归器
+                g_g,                             # 参数3：全局模型梯度幅度
+                g_i                              # 参数4：本地模型梯度幅度
             )
             
             # 算法3.1第10行: 客户端获得初始个性化模型
@@ -381,10 +402,11 @@ for cc in range(start_epoch, args.global_rounds):
             e[i, j] = torch.mean(sq_error)
             
             # 收集梯度用于后续服务器聚合
+            # 正确收集个性化后的本地回归器参数(算法3.1第12行)
             if args.regressor_type == 'linear':
-                agg_grad.append(hybrid_models[j].regressor.weight)
+                agg_grad.append(local_models[j].regressor.weight)
             else:  # MLP
-                agg_grad.append({name: param.data.clone() for name, param in hybrid_models[j].regressor.named_parameters()})
+                agg_grad.append({name: param.data.clone() for name, param in local_models[j].regressor.named_parameters()})
             
             # 这里389-392行的代码似乎与378-380行重复，因为已经计算过误差e[i,j]
             # 如果需要计算累积误差，使用前面计算的y_pred和Y[j][i:i+1]
@@ -442,6 +464,9 @@ for cc in range(start_epoch, args.global_rounds):
                 'global_model': federated_model.state_dict() if hasattr(federated_model, 'state_dict') else None,
                 'regressor_type': args.regressor_type,
                 'hidden_dims': args.hidden_dims if args.regressor_type == 'mlp' else None,
+                # 添加MLP特征提取器相关参数
+                'extractor_hidden_dims': args.extractor_hidden_dims,
+                'output_dim': args.output_dim,
                 'w': w.clone() if isinstance(w, torch.Tensor) else w.copy(),
                 'w_loc': w_loc.clone() if isinstance(w_loc, torch.Tensor) else w_loc.copy(),
                 'a': a.clone() if isinstance(a, torch.Tensor) else a.copy(),
@@ -455,8 +480,8 @@ for cc in range(start_epoch, args.global_rounds):
             torch.save(best_model_checkpoint, best_model_path)
             print(f"  发现新的最佳模型! MSE: {best_mse:.6f}, MAE: {best_mae:.6f}, 已保存到: {best_model_path}")
     
-    # 每5轮计算并输出一次MAE和MSE
-    if (cc+1) % 5 == 0 or cc == 0:
+    # 每轮计算并输出一次MAE和MSE
+    if (cc+1) % 1 == 0 or cc == 0:
         print(f"\n  Round {cc+1} - MSE: {current_mse:.6f}, MAE: {current_mae:.6f}")
         
         # 将结果写入日志文件
@@ -489,7 +514,9 @@ for cc in range(start_epoch, args.global_rounds):
     gc.collect()
     
     # 释放本轮不再需要的大型变量
-    del e, ran_feature
+    del e
+    if 'ran_feature' in locals():
+        del ran_feature
     if 'agg_grad' in locals():
         del agg_grad
     

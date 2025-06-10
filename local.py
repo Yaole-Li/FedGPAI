@@ -6,7 +6,9 @@ import gc
 import time
 import matplotlib.pyplot as plt
 from lib.datasets.data_loader import data_loader
-from lib.FedGPAI.get_FedGPAI import get_FedGPAI
+from lib.FedGPAI.models import MLPFeatureExtractor, MLPRegressor
+from lib.FedGPAI.FedGPAI_advanced import FedGPAI_advanced
+from copy import deepcopy
 
 parser = argparse.ArgumentParser()
 
@@ -20,15 +22,26 @@ parser.add_argument("--num_samples", default=250, type=int, help="每个客户�
 parser.add_argument("--test_ratio", default=0.2, type=float, help="测试集比例")
 
 # 模型相关参数
-parser.add_argument("--num_random_features", default=100, type=int, help="随机特征数量")
 parser.add_argument("--regularizer", default=1e-6, type=float, help="正则化参数")
 parser.add_argument("--global_rounds", default=20, type=int, help="训练轮数")
 parser.add_argument("--local_rounds", default=5, type=int, help="本地训练轮数")
+
+# MLP模型参数
+parser.add_argument("--extractor_hidden_dims", default="256,128,64", type=str, help="特征提取器MLP隐藏层维度")
+parser.add_argument("--regressor_hidden_dims", default="32,16", type=str, help="回归器MLP隐藏层维度")
+parser.add_argument("--output_dim", default=32, type=int, help="特征提取器输出维度/回归器输入维度")
 
 args = parser.parse_args()
 
 # 设置学习率
 args.eta = 1/np.sqrt(args.num_samples)
+
+# 解析隐藏层维度字符串
+def parse_hidden_dims(hidden_dims_str):
+    """将逗号分隔的字符串转换为整数列表"""
+    if not hidden_dims_str:
+        return []
+    return [int(dim) for dim in hidden_dims_str.split(',')]
 
 # 加载数据集
 print(f"正在加载 {args.dataset} 数据集...")
@@ -39,26 +52,17 @@ M, N = X[0].shape
 K = args.num_clients
 M *= K
 
-# 设置随机核参数
-print("初始化随机特征...")
-gamma = []
-num_rbf = 3
-for i in range(num_rbf):
-    gamma.append(10**(i-1))
-gamma = np.array(gamma)
-
-# 设置随机特征数量
-n_components = args.num_random_features
-
-# 初始化权重 - 每个客户端都有自己的独立权重
-w_local = [torch.ones((1, np.prod(gamma.shape)), dtype=torch.float32) for _ in range(K)]
+# 解析MLP模型隐藏层维度
+extractor_hidden_dims = parse_hidden_dims(args.extractor_hidden_dims)
+regressor_hidden_dims = parse_hidden_dims(args.regressor_hidden_dims)
 
 # 初始化设备
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(f"使用设备: {device}")
 
-# 将所有张量移到相应设备
-w_local = [w.to(device) for w in w_local]
+print(f"\n创建MLP模型 - 输入维度: {N}")
+print(f"  特征提取器: 隐藏层{extractor_hidden_dims}, 输出维度{args.output_dim}")
+print(f"  回归器: 隐藏层{regressor_hidden_dims}, 输出维度 1")
 
 # 创建保存模型的目录
 # 使用方法名称_数据集_客户端数量_全局联邦训练轮数_时间戳作为文件夹名称
@@ -97,24 +101,26 @@ best_mae = float('inf')
 
 print(f"开始本地训练 (每个客户端独立训练 {args.global_rounds} 轮)...")
 
+# 创建每个客户端的独立 MLP 模型
+local_models = []
+for i in range(K):
+    # 初始化客户端模型
+    model = FedGPAI_advanced(
+        lam=args.regularizer, 
+        rf_feature=N,  # 输入维度
+        eta=args.eta, 
+        regressor_type='mlp', 
+        extractor_hidden_dims=extractor_hidden_dims,
+        regressor_hidden_dims=regressor_hidden_dims,
+        output_dim=args.output_dim,
+        num_clients=args.num_clients, 
+        is_global=False,
+    )
+    local_models.append(model)
+
 # 执行本地训练过程 - 每个客户端完全独立
 for cc in range(args.global_rounds):
     print(f"\n轮次 {cc+1}/{args.global_rounds}")
-    
-    # 生成随机特征
-    ran_feature = torch.zeros((N, n_components, gamma.shape[0]), dtype=torch.float32)
-    for i in range(num_rbf):
-        ran_feature[:, :, i] = torch.randn(N, n_components) * torch.sqrt(torch.tensor(1/gamma[i], dtype=torch.float32))
-        
-    # 移动到相应设备
-    ran_feature = ran_feature.to(device)
-    
-    # 为每个客户端单独获取模型
-    alg_local = []
-    for j in range(K):
-        # 由于本地版本不需要全局模型，我们只初始化本地模型
-        local_models, _, _ = get_FedGPAI(ran_feature, args)
-        alg_local.append(local_models[j])
     
     # 创建误差记录器
     e_local = [torch.zeros((args.num_samples, 1), dtype=torch.float32).to(device) for _ in range(K)]
@@ -124,26 +130,56 @@ for cc in range(args.global_rounds):
         if j % 10 == 0:
             print(f"  训练客户端 {j+1}/{K}")
         
-        # 样本级训练
+        # 为当前客户端设置优化器 - 同时优化特征提取器和回归器参数
+        params = list(local_models[j].feature_extractor.parameters()) + list(local_models[j].regressor.parameters())
+        optimizer = torch.optim.Adam(params, lr=args.eta)
+        loss_fn = torch.nn.MSELoss()
+        
+        # 执行本地训练回合
+        for _ in range(args.local_rounds):
+            batch_losses = []
+            
+            # 样本级训练
+            for i in range(args.num_samples):
+                # 将NumPy数组转换为PyTorch张量并移动到指定设备
+                x_j = torch.tensor(X[j][i:i+1, :], dtype=torch.float32).to(device)
+                y_j = torch.tensor(Y[j][i], dtype=torch.float32).to(device)
+                
+                # 清除之前的梯度
+                optimizer.zero_grad()
+                
+                # 前向传播
+                output = local_models[j].forward(x_j)
+                
+                # 计算损失
+                loss = loss_fn(output, y_j.view(-1, 1))
+                batch_losses.append(loss.item())
+                
+                # 反向传播
+                loss.backward()
+                
+                # 更新参数
+                optimizer.step()
+        
+        # 计算并记录损失
         for i in range(args.num_samples):
             # 将NumPy数组转换为PyTorch张量并移动到指定设备
             x_j = torch.tensor(X[j][i:i+1, :], dtype=torch.float32).to(device)
             y_j = torch.tensor(Y[j][i], dtype=torch.float32).to(device)
             
-            # 本地模型预测
-            f_RF_loc, f_RF_p, X_features = alg_local[j].predict(x_j, w_local[j])
-            
-            # 本地模型权重更新 - 没有联邦学习，只有本地更新
-            w_local[j], local_grad = alg_local[j].local_update(f_RF_p, y_j, w_local[j], X_features)
+            # 仅进行前向传播计算损失，不进行反向传播
+            with torch.no_grad():
+                output = local_models[j].forward(x_j)
+                mse = ((output - y_j.view(-1, 1)) ** 2)
             
             # 记录误差
-            m_local[j][i, cc] = (f_RF_loc - y_j)**2
+            m_local[j][i, cc] = mse.item()
             
             # 计算累积误差
             if i == 0:
-                e_local[j][i, 0] = (f_RF_loc - y_j)**2
+                e_local[j][i, 0] = mse.item()
             else:
-                e_local[j][i, 0] = (1/(i+1)) * ((i*e_local[j][i-1, 0]) + ((f_RF_loc - y_j)**2))
+                e_local[j][i, 0] = (1/(i+1)) * ((i*e_local[j][i-1, 0]) + mse.item())
     
     # 计算平均误差
     for j in range(K):
@@ -174,11 +210,18 @@ for cc in range(args.global_rounds):
             log_file.write(f"MAE: {current_mae:.6f}\n")
             log_file.write(f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
-        # 保存模型
+        # 保存模型 - 分别保存特征提取器和回归器状态
+        saved_models = []
+        for model in local_models:
+            saved_model = {
+                'feature_extractor': model.feature_extractor.state_dict(),
+                'regressor': model.regressor.state_dict()
+            }
+            saved_models.append(saved_model)
+            
         checkpoint = {
             'epoch': cc + 1,
-            'local_models': [model.state_dict() if hasattr(model, 'state_dict') else None for model in alg_local],
-            'w_local': w_local,
+            'local_models': saved_models,
             'mse': avg_mse.item(),
             'mae': current_mae
         }

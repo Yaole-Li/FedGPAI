@@ -3,7 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, Dict, List
-from lib.FedGPAI.models import create_regressor, LinearRegressor, MLPRegressor
+from copy import deepcopy
+from lib.FedGPAI.models import create_regressor, LinearRegressor, MLPRegressor, MLPFeatureExtractor
 
 # 检查是否有可用的GPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -13,16 +14,18 @@ class FedGPAI_advanced:
     增强版FedGPAI模型类，支持可选的回归器类型(线性或MLP)
     实现算法3.1-3.3的增强版本，特征提取器和回归器分离的联邦学习
     """
-    def __init__(self, lam=1e-5, rf_feature=None, eta=1e-4, regressor_type='linear', 
-                 hidden_dims=None, num_clients=1, is_global=False):
+    def __init__(self, lam=1e-5, rf_feature=None, eta=1e-4, regressor_type='mlp', 
+                 extractor_hidden_dims=None, regressor_hidden_dims=None, output_dim=64, num_clients=1, is_global=False):
         """初始化增强版FedGPAI模型
         
         参数:
             lam (float): 正则化参数
-            rf_feature (numpy.ndarray 或 torch.Tensor): 随机特征张量
+            rf_feature (numpy.ndarray 或 torch.Tensor): 数据特征（仅用于维度推断，不再用于实际特征提取）
             eta (float): 学习率
-            regressor_type (str): 回归器类型，'linear'或'mlp'
-            hidden_dims (List[int]): MLP回归器的隐藏层大小，仅当regressor_type='mlp'时使用
+            regressor_type (str): 回归器类型，默认为'mlp'
+            extractor_hidden_dims (List[int]): 特征提取器MLP的隐藏层大小，None时使用默认值
+            regressor_hidden_dims (List[int]): 回归器MLP的隐藏层大小，None时使用默认值
+            output_dim (int): MLP特征提取器的输出维度，也是回归器的输入维度
             num_clients (int): 客户端数量
             is_global (bool): 是否为全局模型
         """
@@ -30,40 +33,59 @@ class FedGPAI_advanced:
         self.device = device
         self.input_feature_dim = None
         self.regressor_type = regressor_type
-        self.hidden_dims = hidden_dims if hidden_dims else [64, 32]
         
-        # 如果是numpy数组，转换为torch张量
-        if isinstance(rf_feature, np.ndarray):
+        # 设置MLP隐藏层大小
+        self.extractor_hidden_dims = extractor_hidden_dims if extractor_hidden_dims else [64, 32]
+        self.regressor_hidden_dims = regressor_hidden_dims if regressor_hidden_dims else [64, 32]
+        
+        # 保存输出维度
+        self.output_dim = output_dim
+        
+        # 处理不同类型的rf_feature参数
+        if isinstance(rf_feature, int):
+            # 如果rf_feature是整数，就直接将其作为输入维度
+            self.input_feature_dim = rf_feature
+            self.rf_feature = None
+        elif isinstance(rf_feature, np.ndarray):
+            # 如果是numpy数组，转换为torch张量
             self.rf_feature = torch.from_numpy(rf_feature).float().to(self.device)
-        else:
-            self.rf_feature = rf_feature
-            
-        # 确定随机特征维度
-        if rf_feature is not None:
-            if len(rf_feature.shape) == 3:  # 对于3D特征
+            if len(rf_feature.shape) == 3:
                 n_samples, n_features, n_rf = rf_feature.shape
-                self.input_feature_dim = self.input_feature_dim or n_features
-                self.n_rf = n_rf
-            else:  # 对于2D特征
-                n_rf = rf_feature.shape[0] if len(rf_feature.shape) > 0 else 100
-                self.n_rf = n_rf
-                if len(rf_feature.shape) > 1:
-                    self.input_feature_dim = self.input_feature_dim or rf_feature.shape[1]
+                self.input_feature_dim = n_features
+            elif len(rf_feature.shape) > 1:
+                self.input_feature_dim = rf_feature.shape[1] 
+            else:
+                self.input_feature_dim = 32
+        elif isinstance(rf_feature, torch.Tensor):
+            # 如果是torch张量
+            self.rf_feature = rf_feature
+            if len(rf_feature.shape) == 3:
+                n_samples, n_features, n_rf = rf_feature.shape
+                self.input_feature_dim = n_features
+            elif len(rf_feature.shape) > 1:
+                self.input_feature_dim = rf_feature.shape[1]
+            else:
+                self.input_feature_dim = 32
         else:
-            self.n_rf = 100
+            # 默认输入维度
+            self.input_feature_dim = 32
+            self.rf_feature = None
+            
+        # 使用output_dim作为特征提取器的输出维度
+        self.feature_dim = output_dim
         
-        # 如果仍未确定输入特征维度，设置默认值
-        self.input_feature_dim = self.input_feature_dim or self.n_rf
+        # 初始化MLP特征提取器
+        self.feature_extractor = MLPFeatureExtractor(
+            input_dim=self.input_feature_dim,
+            output_dim=self.feature_dim,
+            hidden_dims=self.extractor_hidden_dims
+        )
         
-        # 初始化特征提取器为适当维度
-        self.feature_extractor = torch.randn(self.input_feature_dim, self.n_rf, dtype=torch.float32).to(self.device)
-        self.feature_extractor.requires_grad_(True)
-        
-        # 初始化回归器
-        self.regressor = create_regressor(
-            regressor_type=regressor_type,
-            input_dim=self.n_rf,
-            hidden_dims=self.hidden_dims
+        # 初始化MLP回归器
+        self.regressor = MLPRegressor(
+            input_dim=self.feature_dim,
+            hidden_dims=self.regressor_hidden_dims,
+            output_dim=1
         )
         
         # 初始化参数
@@ -74,16 +96,17 @@ class FedGPAI_advanced:
         # 全局模型和本地模型区分
         self.is_global = is_global  # 算法3.1第4-5行，区分全局模型和本地模型
         
-        # 初始化全局权重
-        self.global_weights = torch.ones((1, self.n_rf), dtype=torch.float32).to(self.device) / self.n_rf
+        # 初始化全局权重 (适配MLP特征提取器，不再使用随机傲里叶特征)
+        # 对于MLP特征提取器，我们只保留这个属性但不实际使用
+        self.feature_weights = torch.ones((1, self.output_dim), dtype=torch.float32).to(self.device) / self.output_dim
         
     def create_hybrid_model(self, feature_extractor, regressor):
         """
         创建混合模型(本地特征提取器+全局回归器) (算法3.1第5行)
         
         Args:
-            feature_extractor: 特征提取器
-            regressor: 回归器
+            feature_extractor: 本地MLP特征提取器
+            regressor: 全局MLP回归器
             
         Returns:
             hybrid_model: 混合模型
@@ -91,45 +114,51 @@ class FedGPAI_advanced:
         # 创建一个新的模型实例
         hybrid_model = FedGPAI_advanced(
             lam=self.lam,
-            rf_feature=self.rf_feature,
+            rf_feature=self.input_feature_dim,  # 直接传递输入维度作为整数
             eta=self.eta,
             regressor_type=self.regressor_type,
-            hidden_dims=self.hidden_dims,
+            extractor_hidden_dims=self.extractor_hidden_dims,
+            regressor_hidden_dims=self.regressor_hidden_dims,
+            output_dim=self.output_dim,  # 确保传递output_dim参数
             num_clients=self.num_clients,
             is_global=False  # 混合模型视为本地模型
         )
         
-        # 设置特征提取器
-        hybrid_model.feature_extractor = feature_extractor.clone().detach()
-        
-        # 根据回归器类型设置回归器
+        # 设置特征提取器，使用深复制而不是简单的clone
         try:
-            if self.regressor_type == 'linear':
-                if hasattr(regressor, 'weight'):
-                    # 确保回归器已正确初始化具有相同维度
-                    hybrid_model.regressor = regressor.__class__(regressor.weight.shape[0], regressor.weight.shape[1])
-                    hybrid_model.regressor.weight.data.copy_(regressor.weight.data)
-            else:  # MLP回归器
-                # 对于MLP回归器，重新初始化整个模型并复制参数
-                source_params = regressor.state_dict()
-                hybrid_model.regressor.load_state_dict(source_params)
-                
+            hybrid_model.feature_extractor = deepcopy(feature_extractor)
+            hybrid_model.input_feature_dim = feature_extractor.model[0].in_features
+            hybrid_model.feature_dim = feature_extractor.model[-1].out_features
         except Exception as e:
-            print(f"创建混合模型时出错: {str(e)}")
-            # 如果初始化失败，尝试简单地共享同一回归器（不推荐，仅作为后备）
-            hybrid_model.regressor = regressor
+            print(f"复制本地特征提取器时出错: {str(e)}")
+        
+        # 设置回归器（使用全局回归器）
+        try:
+            # 对于MLP回归器，重新初始化并复制参数
+            hybrid_model.regressor = deepcopy(regressor)
+        except Exception as e:
+            print(f"复制全局回归器时出错: {str(e)}")
+            # 如果复制失败，创建新的回归器并加载状态
+            if hasattr(regressor, 'state_dict'):
+                source_params = regressor.state_dict()
+                hybrid_model.regressor = MLPRegressor(
+                    input_dim=hybrid_model.feature_dim,
+                    hidden_dims=self.regressor_hidden_dims,
+                    output_dim=1
+                )
+                hybrid_model.regressor.load_state_dict(source_params)
         
         return hybrid_model
 
     def extract_features(self, x):
         """
-        提取特征
+        使用MLP特征提取器进行特征提取
         
         Args:
             x: 输入数据，形状为 [batch_size, input_feature_dim]
             
         Returns:
-            features: 提取的特征，形状为 [batch_size, n_rf]
+            features: 提取的特征，形状为 [batch_size, feature_dim]
         """
         # 将输入数据转换为PyTorch tensor并移动到正确设备
         if not isinstance(x, torch.Tensor):
@@ -137,16 +166,19 @@ class FedGPAI_advanced:
         elif x.device != self.device:
             x = x.to(self.device)
             
-        # 检查并调整输入特征维度
+        # 检查输入维度是否与提取器的输入层一致
         if x.shape[1] != self.input_feature_dim:
-            with torch.no_grad():
-                self.input_feature_dim = x.shape[1]
-                # 重新初始化特征提取器以匹配输入维度
-                self.feature_extractor = torch.randn(self.input_feature_dim, self.n_rf, dtype=torch.float32).to(self.device)
-                self.feature_extractor.requires_grad_(True)
-                # print(f"调整特征提取器维度: {self.feature_extractor.shape}")
+            print(f"Warning: 输入特征维度不匹配，需要 {self.input_feature_dim} 实际为 {x.shape[1]}")
+            # 重新初始化MLP特征提取器以匹配新的输入维度
+            self.input_feature_dim = x.shape[1]
+            self.feature_extractor = MLPFeatureExtractor(
+                input_dim=self.input_feature_dim,
+                output_dim=self.feature_dim,
+                hidden_dims=self.extractor_hidden_dims
+            )
         
-        return torch.matmul(x, self.feature_extractor)
+        # 使用MLP特征提取器进行前向传播
+        return self.feature_extractor(x)
     
     def forward(self, x):
         """
@@ -176,7 +208,6 @@ class FedGPAI_advanced:
             regularizer: 正则化参数，如果为None则使用self.lam
             learning_rate: 学习率，如果为None则使用self.eta
             return_loss: 是否返回训练损失
-            
         Returns:
             loss: 如果return_loss=True，返回每个epoch的训练损失
         """
@@ -228,8 +259,10 @@ class FedGPAI_advanced:
                 mse_loss = torch.mean((predictions - Y_batch) ** 2)
                 
                 # 添加正则化项
-                # 对于特征提取器
-                fe_reg_loss = lam * torch.sum(self.feature_extractor ** 2)
+                # 对于MLP特征提取器，需要对所有参数进行正则化
+                fe_reg_loss = 0.0
+                for param in self.feature_extractor.parameters():
+                    fe_reg_loss += lam * torch.sum(param ** 2)
                 
                 # 对于回归器 - 根据不同类型处理
                 reg_loss = 0.0
@@ -241,10 +274,11 @@ class FedGPAI_advanced:
                 
                 total_loss = mse_loss + fe_reg_loss + reg_loss
                 
-                # 反向传播
-                if self.feature_extractor.requires_grad:
-                    grad_fe = torch.autograd.grad(total_loss, self.feature_extractor, retain_graph=True)[0]
-                    self.feature_extractor.data -= eta * grad_fe
+                # 反向传播 - 对MLP特征提取器的每个参数分别更新
+                for param in self.feature_extractor.parameters():
+                    if param.requires_grad:
+                        grad_param = torch.autograd.grad(total_loss, param, retain_graph=True)[0]
+                        param.data -= eta * grad_param
                 
                 # 更新回归器参数
                 if self.regressor_type == 'linear':
@@ -404,69 +438,42 @@ class FedGPAI_advanced:
         # 返回梯度幅度，已切断梯度图
         return g_g.detach(), g_i.detach()
         
-    def model_interpolation(self, g_g, g_i, global_regressor, local_regressor):
+    def model_interpolation(self, global_regressor, local_regressor, L_g, L_i, epsilon=1e-8):
         """
-        基于逐参数自适应插值的个性化回归器优化 (算法3.3)
+        模型参数插值方法 - 实现算法3.3
         
         Args:
-            g_g: 全局模型回归器梯度幅度
-            g_i: 混合模型回归器梯度幅度
-            global_regressor: 全局模型回归器
-            local_regressor: 本地模型回归器
+            global_regressor: 全局MLP回归器
+            local_regressor: 本地MLP回归器
+            L_g: 全局模型梯度大小
+            L_i: 本地模型梯度大小
+            epsilon: 防止除零的小量
             
         Returns:
-            personalized_regressor: 个性化回归器
+            personalized_regressor: 个性化插值回归器
         """
-        # 使用torch.no_grad()上下文管理器来避免计算图的积累
         with torch.no_grad():
-            # 切断输入梯度并确保在GPU上
-            g_g_detached = g_g.detach() if isinstance(g_g, torch.Tensor) else torch.tensor(g_g, dtype=torch.float32)
-            g_i_detached = g_i.detach() if isinstance(g_i, torch.Tensor) else torch.tensor(g_i, dtype=torch.float32)
+            # 创建新的MLP回归器，通过深复制全局回归器
+            new_regressor = deepcopy(global_regressor)
             
-            # 移动到指定设备
-            if g_g_detached.device != self.device:
-                g_g_detached = g_g_detached.to(self.device)
-            if g_i_detached.device != self.device:
-                g_i_detached = g_i_detached.to(self.device)
-            
-            # 算法3.3第3-4行: 计算L2范数
-            epsilon = 1e-8  # 防止除零
-            L_g = torch.norm(g_g_detached, p=2)
-            L_i = torch.norm(g_i_detached, p=2)
-            
-            # 计算插值参数
-            alpha = L_i / (L_g + L_i + epsilon)
-            
-            # 处理不同类型的回归器
-            if self.regressor_type == 'linear':
-                # 线性回归器直接插值权重
-                global_weight = global_regressor.weight.detach()
-                local_weight = local_regressor.weight.detach()
+            # 逐参数插值处理，与算法3.3一致
+            for (name, global_param), (_, local_param) in zip(
+                global_regressor.named_parameters(), local_regressor.named_parameters()
+            ):
+                # 对单个参数计算其归一化梯度
+                # 梯度幅度归一化处理
+                g_g_norm = torch.norm(global_param.detach()) / (L_g + epsilon)
+                g_i_norm = torch.norm(local_param.detach()) / (L_i + epsilon)
                 
-                # 计算插值后的权重
-                personalized_weight = alpha * global_weight + (1 - alpha) * local_weight
+                # 按算法3.3公式计算插值权重
+                alpha_j = 1.0 - (g_i_norm / (g_i_norm + g_g_norm + epsilon))
                 
-                # 创建新的线性回归器并设置权重
-                new_regressor = personalized_weight.clone()
-            else:  # MLP
-                # 对于MLP回归器，需要逐层处理参数
-                from copy import deepcopy
-                new_regressor = deepcopy(global_regressor)  # 创建深拷贝避免影响原始回归器
+                # 插值计算
+                personalized_param = alpha_j * global_param.detach() + (1.0 - alpha_j) * local_param.detach()
                 
-                # 遍历全局和本地回归器的所有参数
-                for (name, global_param), (_, local_param) in zip(
-                    global_regressor.named_parameters(), local_regressor.named_parameters()):
-                    # 获取当前层的全局和本地参数
-                    global_param_detached = global_param.detach()
-                    local_param_detached = local_param.detach()
-                    
-                    # 计算插值后的参数
-                    personalized_param = alpha * global_param_detached + (1 - alpha) * local_param_detached
-                    
-                    # 为新回归器设置插值后的参数
-                    for name_new, param_new in new_regressor.named_parameters():
-                        if name_new == name:
-                            param_new.data.copy_(personalized_param)
-                            break
-        
-        return new_regressor
+                # 获取new_regressor中对应参数并设置插值后的值
+                param_new = dict(new_regressor.named_parameters())[name]
+                param_new.data.copy_(personalized_param)
+            
+            # 返回插值后的新回归器
+            return new_regressor
